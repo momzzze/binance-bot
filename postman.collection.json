@@ -1,0 +1,324 @@
+{
+    "info": {
+        "name": "Binance Bot Local",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+        "description": "Basic checks for the local Binance bot server"
+    },
+    "item": [
+        {
+            "name": "Health",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/api/health",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "health"
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "Binance Account Info",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/api/binance/account",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "binance",
+                        "account"
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "Binance 24h Ticker",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/api/binance/ticker?symbol=BTCUSDT",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "binance",
+                        "ticker"
+                    ],
+                    "query": [
+                        {
+                            "key": "symbol",
+                            "value": "BTCUSDT"
+                        }
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "Binance Klines (Candles)",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/api/binance/klines?symbol=BTCUSDT&interval=1m&limit=10",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "binance",
+                        "klines"
+                    ],
+                    "query": [
+                        {
+                            "key": "symbol",
+                            "value": "BTCUSDT",
+                            "description": "Trading pair symbol"
+                        },
+                        {
+                            "key": "interval",
+                            "value": "1m",
+                            "description": "Kline interval: 1m, 5m, 15m, 1h, 4h, 1d"
+                        },
+                        {
+                            "key": "limit",
+                            "value": "10",
+                            "description": "Number of candles (max 1000)"
+                        }
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "Binance 24h Ticker - ETHUSDT",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/api/binance/ticker?symbol=ETHUSDT",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "binance",
+                        "ticker"
+                    ],
+                    "query": [
+                        {
+                            "key": "symbol",
+                            "value": "ETHUSDT"
+                        }
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "Bot Status",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/api/bot/status",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "bot",
+                        "status"
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "Bot Start",
+            "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/api/bot/start",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "bot",
+                        "start"
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "Bot Stop",
+            "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/api/bot/stop",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "bot",
+                        "stop"
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "Get All Trades",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/api/trades?limit=50",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "trades"
+                    ],
+                    "query": [
+                        {
+                            "key": "symbol",
+                            "value": "BTCUSDT",
+                            "disabled": true
+                        },
+                        {
+                            "key": "side",
+                            "value": "BUY",
+                            "disabled": true
+                        },
+                        {
+                            "key": "limit",
+                            "value": "50"
+                        },
+                        {
+                            "key": "offset",
+                            "value": "0",
+                            "disabled": true
+                        }
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "Get Trade Stats",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/api/trades/stats",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "trades",
+                        "stats"
+                    ],
+                    "query": [
+                        {
+                            "key": "symbol",
+                            "value": "BTCUSDT",
+                            "disabled": true
+                        }
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "Get Trading Signals",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/api/trades/signals?symbol=BTCUSDT&limit=20",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "trades",
+                        "signals"
+                    ],
+                    "query": [
+                        {
+                            "key": "symbol",
+                            "value": "BTCUSDT"
+                        },
+                        {
+                            "key": "limit",
+                            "value": "20"
+                        }
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "Get Trading Summary",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/api/trades/summary",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "trades",
+                        "summary"
+                    ]
+                }
+            },
+            "response": []
+        }
+    ],
+    "event": [
+        {
+            "listen": "prerequest",
+            "script": {
+                "type": "text/javascript",
+                "exec": []
+            }
+        },
+        {
+            "listen": "test",
+            "script": {
+                "type": "text/javascript",
+                "exec": []
+            }
+        }
+    ],
+    "variable": [
+        {
+            "key": "baseUrl",
+            "value": "http://localhost:3000"
+        }
+    ]
+}

@@ -7,8 +7,9 @@
         "node": ">=20"
     },
     "scripts": {
-        "dev": "tsx src/app.ts",
+        "dev": "nodemon --exec tsx src/app.ts",
         "bot:run": "tsx src/app.ts",
+        "db:migrate": "tsx src/modules/db/migrate.ts",
         "build": "tsc -p tsconfig.json",
         "start": "node dist/app.js",
         "lint": "eslint \"src/**/*.ts\"",
@@ -16,11 +17,14 @@
     },
     "dependencies": {
         "dotenv": "^16.4.5",
+        "express": "^5.2.1",
         "pg": "^8.11.3"
     },
     "devDependencies": {
+        "@types/express": "^5.0.6",
         "@types/node": "^20.11.5",
         "eslint": "^8.57.0",
+        "nodemon": "^3.1.11",
         "prettier": "^3.1.1",
         "tsx": "^4.7.0",
         "typescript": "^5.6.3"

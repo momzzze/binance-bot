@@ -56,3 +56,62 @@ export async function getOpenOrdersCountForSymbol(symbol: string): Promise<numbe
   const res = await query<{ cnt: number }>(sql, [symbol]);
   return res.rows[0]?.cnt ?? 0;
 }
+
+/**
+ * Gets all orders with optional filters
+ */
+export async function getOrders(
+  symbol?: string,
+  side?: string,
+  limit: number = 100,
+  offset: number = 0
+): Promise<OrderRow[]> {
+  let sql = `SELECT * FROM orders WHERE 1=1`;
+  const params: unknown[] = [];
+  let paramIndex = 1;
+
+  if (symbol) {
+    sql += ` AND symbol = $${paramIndex}`;
+    params.push(symbol);
+    paramIndex++;
+  }
+
+  if (side) {
+    sql += ` AND side = $${paramIndex}`;
+    params.push(side);
+    paramIndex++;
+  }
+
+  sql += ` ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+  params.push(limit, offset);
+
+  const res = await query<OrderRow>(sql, params);
+  return res.rows;
+}
+
+/**
+ * Gets trading statistics for a symbol
+ */
+export async function getOrderStats(symbol?: string) {
+  let sql = `
+    SELECT
+      COUNT(*) as total_orders,
+      SUM(CASE WHEN side = 'BUY' THEN 1 ELSE 0 END) as buy_orders,
+      SUM(CASE WHEN side = 'SELL' THEN 1 ELSE 0 END) as sell_orders,
+      SUM(CASE WHEN status = 'FILLED' THEN qty ELSE 0 END) as total_qty_filled,
+      SUM(CASE WHEN status = 'FILLED' AND side = 'BUY' THEN qty ELSE 0 END) as buy_qty_filled,
+      SUM(CASE WHEN status = 'FILLED' AND side = 'SELL' THEN qty ELSE 0 END) as sell_qty_filled,
+      COUNT(CASE WHEN status = 'FILLED' THEN 1 END) as filled_count,
+      COUNT(CASE WHEN status = 'CANCELED' THEN 1 END) as canceled_count
+    FROM orders
+  `;
+  const params: unknown[] = [];
+
+  if (symbol) {
+    sql += ` WHERE symbol = $1`;
+    params.push(symbol);
+  }
+
+  const res = await query(sql, params);
+  return res.rows[0];
+}
