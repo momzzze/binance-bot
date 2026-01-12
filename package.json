@@ -1,32 +1,25 @@
 {
-    "name": "binance-bot",
+    "name": "binance-bot-monorepo",
     "version": "0.1.0",
     "private": true,
-    "type": "module",
-    "engines": {
-        "node": ">=20"
-    },
+    "description": "Trading bot with real-time dashboard",
     "scripts": {
-        "dev": "nodemon --exec tsx src/app.ts",
-        "bot:run": "tsx src/app.ts",
-        "db:migrate": "tsx src/modules/db/migrate.ts",
-        "build": "tsc -p tsconfig.json",
-        "start": "node dist/app.js",
-        "lint": "eslint \"src/**/*.ts\"",
-        "format": "prettier --write ."
-    },
-    "dependencies": {
-        "dotenv": "^16.4.5",
-        "express": "^5.2.1",
-        "pg": "^8.11.3"
+        "server:dev": "cd server && pnpm dev",
+        "server:build": "cd server && pnpm build",
+        "server:start": "cd server && pnpm start",
+        "client:dev": "cd client && pnpm dev",
+        "client:build": "cd client && pnpm build",
+        "client:preview": "cd client && pnpm preview",
+        "dev": "concurrently \"pnpm server:dev\" \"pnpm client:dev\"",
+        "build": "pnpm server:build && pnpm client:build",
+        "lint": "pnpm server:lint && pnpm client:lint",
+        "format": "pnpm server:format && pnpm client:format"
     },
     "devDependencies": {
-        "@types/express": "^5.0.6",
-        "@types/node": "^20.11.5",
-        "eslint": "^8.57.0",
-        "nodemon": "^3.1.11",
-        "prettier": "^3.1.1",
-        "tsx": "^4.7.0",
-        "typescript": "^5.6.3"
+        "@types/cors": "^2.8.19",
+        "concurrently": "^8.2.2"
+    },
+    "dependencies": {
+        "cors": "^2.8.5"
     }
 }

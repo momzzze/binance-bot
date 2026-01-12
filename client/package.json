@@ -1,0 +1,27 @@
+{
+    "name": "binance-bot-client",
+    "private": true,
+    "version": "1.0.0",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "tsc -b && vite build",
+        "preview": "vite preview"
+    },
+    "dependencies": {
+        "@tanstack/react-router": "^1.87.3",
+        "lightweight-charts": "^4.2.3",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
+        "zustand": "^5.0.2"
+    },
+    "devDependencies": {
+        "@tanstack/router-plugin": "^1.149.0",
+        "@types/react": "^18.3.12",
+        "@types/react-dom": "^18.3.1",
+        "@vitejs/plugin-react": "^4.3.4",
+        "sass": "^1.83.0",
+        "typescript": "~5.6.2",
+        "vite": "^6.0.3"
+    }
+}
