@@ -2,6 +2,16 @@ import util from 'node:util';
 
 type Level = 'info' | 'warn' | 'error' | 'debug';
 
+// Log level configuration - set to 'info' to hide debug logs
+const MIN_LOG_LEVEL = (process.env.LOG_LEVEL as Level) || 'info';
+
+const LEVEL_PRIORITY: Record<Level, number> = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3,
+};
+
 const COLORS = {
   reset: '\x1b[0m',
   dim: '\x1b[2m',
@@ -53,14 +63,19 @@ function serializeArgs(args: unknown[]): string {
 
 export function createLogger(scope?: string) {
   const prefix = scope ? `[${scope}] ` : '';
+
+  const shouldLog = (level: Level): boolean => {
+    return LEVEL_PRIORITY[level] >= LEVEL_PRIORITY[MIN_LOG_LEVEL];
+  };
+
   return {
     info: (msg: string, ...args: unknown[]) =>
-      console.log(format('info', prefix + msg) + serializeArgs(args)),
+      shouldLog('info') && console.log(format('info', prefix + msg) + serializeArgs(args)),
     warn: (msg: string, ...args: unknown[]) =>
-      console.warn(format('warn', prefix + msg) + serializeArgs(args)),
+      shouldLog('warn') && console.warn(format('warn', prefix + msg) + serializeArgs(args)),
     error: (msg: string, ...args: unknown[]) =>
-      console.error(format('error', prefix + msg) + serializeArgs(args)),
+      shouldLog('error') && console.error(format('error', prefix + msg) + serializeArgs(args)),
     debug: (msg: string, ...args: unknown[]) =>
-      console.debug(format('debug', prefix + msg) + serializeArgs(args)),
+      shouldLog('debug') && console.debug(format('debug', prefix + msg) + serializeArgs(args)),
   };
 }

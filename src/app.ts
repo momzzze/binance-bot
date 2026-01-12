@@ -7,6 +7,7 @@ import { setState } from './modules/db/queries/bot_state.js';
 import { redact } from './utils/redact.js';
 import { BinanceClient } from './modules/exchange/binanceClient.js';
 import { createAppRouter } from './routes/index.js';
+import { runBot } from './modules/runner/botRunner.js';
 
 const logger = createLogger();
 const config = loadEnv();
@@ -67,6 +68,17 @@ async function main() {
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+
+  // Auto-start bot if trading is enabled
+  if (config.TRADING_ENABLED && binanceClient) {
+    logger.info('Auto-starting trading bot...');
+    runBot(binanceClient, config).catch((err) => {
+      logger.error('Bot error:', err);
+    });
+  } else {
+    logger.warn('Bot not started (TRADING_ENABLED=false or no Binance API keys)');
+    logger.info('Call POST /api/v1/bot/start to start the bot manually');
+  }
 }
 
 main().catch((err) => {

@@ -69,6 +69,22 @@ function calculateATR(candles: Candle[], period: number = 14): number {
  * 4. RSI confirmation (momentum confirmation)
  */
 export function computeMarketCapSignal(candles: Candle[], symbol: string): MarketCapSignal {
+  if (candles.length === 0) {
+    return {
+      symbol,
+      signal: 'HOLD',
+      score: 0,
+      confidence: 0,
+      meta: {
+        currentPrice: 0,
+        volumeTrend: 0,
+        momentumScore: 0,
+        volatility: 0,
+        reason: 'No candle data available',
+      },
+    };
+  }
+
   if (candles.length < 50) {
     return {
       symbol,
@@ -99,19 +115,28 @@ export function computeMarketCapSignal(candles: Candle[], symbol: string): Marke
   let confidence = 50;
   const reasons: string[] = [];
 
+  log.debug(
+    `${symbol}: Evaluating - price=${currentPrice.toFixed(2)}, volumeTrend=${volumeTrend.toFixed(1)}%, volatility=${(volatility * 100).toFixed(2)}%, SMA20=${sma20?.toFixed(2)}, SMA50=${sma50?.toFixed(2)}, EMA12=${ema12?.toFixed(2)}, EMA26=${ema26?.toFixed(2)}, RSI=${rsi?.toFixed(1)}`
+  );
+
   // 1. VOLUME SURGE - Primary signal for market cap following
   if (volumeTrend > 50) {
     score += 4;
     confidence += 20;
     reasons.push(`Volume surge: ${volumeTrend.toFixed(1)}%`);
+    log.debug(`  +4 Volume surge: ${volumeTrend.toFixed(1)}% > 50%`);
   } else if (volumeTrend > 20) {
     score += 2;
     confidence += 10;
     reasons.push(`Volume increase: ${volumeTrend.toFixed(1)}%`);
+    log.debug(`  +2 Volume increase: ${volumeTrend.toFixed(1)}% > 20%`);
   } else if (volumeTrend < -40) {
     score -= 3;
     confidence += 10;
     reasons.push(`Volume collapse: ${volumeTrend.toFixed(1)}%`);
+    log.debug(`  -3 Volume collapse: ${volumeTrend.toFixed(1)}% < -40%`);
+  } else {
+    log.debug(`  +0 Volume neutral: ${volumeTrend.toFixed(1)}%`);
   }
 
   // 2. MOMENTUM - Price trend confirmation
@@ -121,12 +146,17 @@ export function computeMarketCapSignal(candles: Candle[], symbol: string): Marke
       score += 3;
       confidence += 15;
       reasons.push(`Strong uptrend: ${trendStrength.toFixed(2)}%`);
+      log.debug(`  +3 Strong uptrend: ${trendStrength.toFixed(2)}% > 2%`);
     } else if (trendStrength > 0.5) {
       score += 1;
       reasons.push(`Weak uptrend: ${trendStrength.toFixed(2)}%`);
+      log.debug(`  +1 Weak uptrend: ${trendStrength.toFixed(2)}% > 0.5%`);
     } else if (trendStrength < -2) {
       score -= 3;
       reasons.push(`Strong downtrend: ${trendStrength.toFixed(2)}%`);
+      log.debug(`  -3 Strong downtrend: ${trendStrength.toFixed(2)}% < -2%`);
+    } else {
+      log.debug(`  +0 Momentum neutral: ${trendStrength.toFixed(2)}%`);
     }
   }
 
@@ -136,8 +166,10 @@ export function computeMarketCapSignal(candles: Candle[], symbol: string): Marke
       score += 2;
       confidence += 10;
       reasons.push('EMA12 > EMA26 (bullish momentum)');
+      log.debug(`  +2 EMA bullish: 12(${ema12.toFixed(2)}) > 26(${ema26.toFixed(2)})`);
     } else {
       score -= 2;
+      log.debug(`  -2 EMA bearish: 12(${ema12.toFixed(2)}) < 26(${ema26.toFixed(2)})`);
     }
   }
 
@@ -147,6 +179,9 @@ export function computeMarketCapSignal(candles: Candle[], symbol: string): Marke
     score += 2;
     confidence += 10;
     reasons.push(`Volatility expansion: ${(volatility * 100).toFixed(2)}%`);
+    log.debug(`  +2 Volatility expansion: ${(volatility * 100).toFixed(2)}% > 2%`);
+  } else {
+    log.debug(`  +0 Volatility normal: ${(volatility * 100).toFixed(2)}%`);
   }
 
   // 5. RSI CONFIRMATION
@@ -154,25 +189,32 @@ export function computeMarketCapSignal(candles: Candle[], symbol: string): Marke
     if (rsi < 40) {
       score += 1;
       reasons.push(`RSI: ${rsi.toFixed(1)} (oversold)`);
+      log.debug(`  +1 RSI oversold: ${rsi.toFixed(1)} < 40`);
     } else if (rsi > 60) {
       score -= 1;
       reasons.push(`RSI: ${rsi.toFixed(1)} (overbought)`);
+      log.debug(`  -1 RSI overbought: ${rsi.toFixed(1)} > 60`);
+    } else {
+      log.debug(`  +0 RSI neutral: ${rsi.toFixed(1)}`);
     }
   }
 
   // Determine signal
   let signal: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
-  if (score >= 5) {
+  if (score >= 3) {
     signal = 'BUY';
-  } else if (score <= -4) {
+  } else if (score <= -3) {
     signal = 'SELL';
   }
 
   confidence = Math.min(100, Math.max(0, confidence));
 
-  log.debug(
-    `${symbol}: signal=${signal}, score=${score}, confidence=${confidence.toFixed(0)}%, volumeTrend=${volumeTrend.toFixed(1)}%`
-  );
+  // Log actionable signals (BUY/SELL)
+  if (signal !== 'HOLD') {
+    log.debug(
+      `${symbol}: signal=${signal}, score=${score}, confidence=${confidence.toFixed(0)}%, volumeTrend=${volumeTrend.toFixed(1)}%`
+    );
+  }
 
   return {
     symbol,

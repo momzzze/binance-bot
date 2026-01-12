@@ -60,8 +60,23 @@ export async function getOpenPositions(symbol?: string): Promise<PositionRow[]> 
   }
 
   sql += ` ORDER BY created_at DESC`;
-  const res = await query<PositionRow>(sql, params);
-  return res.rows;
+  const res = await query<any>(sql, params);
+
+  // Convert numeric strings to numbers
+  return res.rows.map((row) => ({
+    ...row,
+    entry_price: Number(row.entry_price),
+    quantity: Number(row.quantity),
+    current_price: Number(row.current_price),
+    stop_loss_price: row.stop_loss_price ? Number(row.stop_loss_price) : null,
+    take_profit_price: row.take_profit_price ? Number(row.take_profit_price) : null,
+    initial_stop_loss_price: row.initial_stop_loss_price
+      ? Number(row.initial_stop_loss_price)
+      : null,
+    pnl_usdt: Number(row.pnl_usdt),
+    pnl_percent: Number(row.pnl_percent),
+    highest_price: row.highest_price ? Number(row.highest_price) : null,
+  }));
 }
 
 export async function updatePositionPrice(
@@ -74,11 +89,11 @@ export async function updatePositionPrice(
     SET
       current_price = $2,
       highest_price = CASE
-        WHEN $3 IS NOT NULL THEN GREATEST(COALESCE(highest_price, entry_price), $3)
+        WHEN $3::numeric IS NOT NULL THEN GREATEST(COALESCE(highest_price, entry_price), $3::numeric)
         ELSE highest_price
       END,
-      pnl_usdt = (current_price - entry_price) * quantity,
-      pnl_percent = ((current_price - entry_price) / entry_price) * 100,
+      pnl_usdt = ($2 - entry_price) * quantity,
+      pnl_percent = (($2 - entry_price) / entry_price) * 100,
       updated_at = NOW()
     WHERE id = $1
     RETURNING *;

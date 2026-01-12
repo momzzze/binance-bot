@@ -10,6 +10,7 @@ import type {
   BinanceOrderQueryResponse,
   BinanceKline,
   BinanceTicker24h,
+  BinanceExchangeInfo,
 } from './types.js';
 
 const logger = createLogger('BinanceClient');
@@ -175,6 +176,18 @@ export class BinanceClient {
       interval,
       limit,
     });
+
+    if (!raw || raw.length === 0) {
+      logger.warn(`${symbol}: API returned empty klines array`);
+      return [];
+    }
+
+    if (raw[0] && raw[0].length < 11) {
+      logger.error(
+        `${symbol}: Malformed kline data - expected 11+ elements, got ${raw[0].length}. First kline: ${JSON.stringify(raw[0])}`
+      );
+    }
+
     return raw.map((k) => ({
       openTime: Number(k[0]),
       open: String(k[1]),
@@ -191,6 +204,17 @@ export class BinanceClient {
   }
 
   // ========== SIGNED ENDPOINTS ==========
+
+  async getPrice(symbol: string): Promise<{ symbol: string; price: string }> {
+    return this.publicRequest<{ symbol: string; price: string }>('/api/v3/ticker/price', {
+      symbol,
+    });
+  }
+
+  async getExchangeInfo(symbol?: string): Promise<BinanceExchangeInfo> {
+    const params = symbol ? { symbol } : {};
+    return this.publicRequest<BinanceExchangeInfo>('/api/v3/exchangeInfo', params);
+  }
 
   async getAccountInfo(): Promise<BinanceAccountInfo> {
     return this.withRetry(() => this.signedRequest<BinanceAccountInfo>('GET', '/api/v3/account'));

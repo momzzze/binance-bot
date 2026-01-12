@@ -30,15 +30,46 @@ export async function fetchCandles(
   limit: number = 100
 ): Promise<Candle[]> {
   const klines = await client.getKlines(symbol, interval, limit);
-  return klines.map((k: BinanceKline) => ({
-    openTime: k[0],
-    open: parseFloat(k[1]),
-    high: parseFloat(k[2]),
-    low: parseFloat(k[3]),
-    close: parseFloat(k[4]),
-    volume: parseFloat(k[5]),
-    closeTime: k[6],
-  }));
+  if (klines.length === 0) {
+    log.warn(`⚠️  ${symbol}: Klines response is empty`);
+    return [];
+  }
+
+  const candles = klines.map((k: BinanceKline) => {
+    try {
+      const candle = {
+        openTime: k.openTime,
+        open: parseFloat(k.open),
+        high: parseFloat(k.high),
+        low: parseFloat(k.low),
+        close: parseFloat(k.close),
+        volume: parseFloat(k.volume),
+        closeTime: k.closeTime,
+      };
+
+      // Check for NaN values
+      if (
+        isNaN(candle.open) ||
+        isNaN(candle.high) ||
+        isNaN(candle.low) ||
+        isNaN(candle.close) ||
+        isNaN(candle.volume)
+      ) {
+        log.error(
+          `${symbol}: Invalid candle data - open=${k.open}, high=${k.high}, low=${k.low}, close=${k.close}, volume=${k.volume}`
+        );
+        return null;
+      }
+
+      return candle;
+    } catch (error) {
+      log.error(`${symbol}: Error parsing candle:`, error);
+      return null;
+    }
+  });
+
+  // Filter out null values
+  return candles.filter((c) => c !== null) as Candle[];
 }
 
 /**
@@ -56,17 +87,35 @@ export async function fetchMultiSymbolCandles(
   const results = await Promise.allSettled(
     symbols.map(async (symbol) => {
       const candles = await fetchCandles(client, symbol, interval, limit);
+      if (candles.length === 0) {
+        log.warn(`⚠️  ${symbol}: No candles fetched (empty response from API)`);
+      }
       return { symbol, candles, lastUpdate: now };
     })
   );
 
   const successful: SymbolCandles[] = [];
-  for (const result of results) {
-    if (result.status === 'fulfilled') {
+  const failed: string[] = [];
+
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    if (result?.status === 'fulfilled' && result.value) {
       successful.push(result.value);
-    } else {
-      log.error('Failed to fetch candles:', result.reason);
+    } else if (result?.status === 'rejected') {
+      const symbol = symbols[i];
+      failed.push(symbol);
+      const errorMsg =
+        result.reason instanceof Error ? result.reason.message : String(result.reason);
+      if (errorMsg.includes('Invalid symbol')) {
+        log.warn(`⚠️  Symbol ${symbol} is invalid (not available on this exchange)`);
+      } else {
+        log.error(`Failed to fetch candles for ${symbol}:`, result.reason);
+      }
     }
+  }
+
+  if (failed.length > 0) {
+    log.warn(`Failed symbols: ${failed.join(', ')} - consider adding to EXCLUDE_SYMBOLS`);
   }
 
   log.info(`Successfully fetched candles for ${successful.length}/${symbols.length} symbols`);
@@ -93,10 +142,11 @@ export function computeEMA(candles: Candle[], period: number): number | null {
   }
 
   const k = 2 / (period + 1);
-  let ema = candles[0].close;
+  let ema = candles[0]?.close ?? 0;
 
   for (let i = 1; i < candles.length; i++) {
-    ema = candles[i].close * k + ema * (1 - k);
+    const close = candles[i]?.close ?? 0;
+    ema = close * k + ema * (1 - k);
   }
 
   return ema;
@@ -112,17 +162,20 @@ export function computeRSI(candles: Candle[], period: number = 14): number | nul
 
   const changes = [];
   for (let i = 1; i < candles.length; i++) {
-    changes.push(candles[i].close - candles[i - 1].close);
+    const curr = candles[i]?.close ?? 0;
+    const prev = candles[i - 1]?.close ?? 0;
+    changes.push(curr - prev);
   }
 
   let gains = 0;
   let losses = 0;
 
   for (let i = 0; i < period; i++) {
-    if (changes[i] > 0) {
-      gains += changes[i];
+    const change = changes[i] ?? 0;
+    if (change > 0) {
+      gains += change;
     } else {
-      losses += Math.abs(changes[i]);
+      losses += Math.abs(change);
     }
   }
 
@@ -130,7 +183,7 @@ export function computeRSI(candles: Candle[], period: number = 14): number | nul
   let avgLoss = losses / period;
 
   for (let i = period; i < changes.length; i++) {
-    const change = changes[i];
+    const change = changes[i] ?? 0;
     avgGain = (avgGain * (period - 1) + (change > 0 ? change : 0)) / period;
     avgLoss = (avgLoss * (period - 1) + (change < 0 ? Math.abs(change) : 0)) / period;
   }

@@ -9,11 +9,59 @@ import { sleep } from '../../utils/sleep.js';
 
 const log = createLogger('executor');
 
+// Cache for symbol filters
+const symbolFiltersCache = new Map<
+  string,
+  { minQty: number; stepSize: number; minNotional: number }
+>();
+
 export interface ExecutionResult {
   symbol: string;
   success: boolean;
   orderId?: string;
   reason: string;
+}
+
+/**
+ * Fetch and cache LOT_SIZE filter for a symbol
+ */
+async function getSymbolFilters(client: BinanceClient, symbol: string) {
+  if (symbolFiltersCache.has(symbol)) {
+    return symbolFiltersCache.get(symbol)!;
+  }
+
+  const exchangeInfo = await client.getExchangeInfo(symbol);
+  const symbolInfo = exchangeInfo.symbols.find((s) => s.symbol === symbol);
+
+  if (!symbolInfo) {
+    throw new Error(`Symbol ${symbol} not found in exchange info`);
+  }
+
+  const lotSizeFilter = symbolInfo.filters.find((f) => f.filterType === 'LOT_SIZE');
+  const notionalFilter = symbolInfo.filters.find(
+    (f) => f.filterType === 'NOTIONAL' || f.filterType === 'MIN_NOTIONAL'
+  );
+
+  if (!lotSizeFilter || !lotSizeFilter.minQty || !lotSizeFilter.stepSize) {
+    throw new Error(`LOT_SIZE filter not found for ${symbol}`);
+  }
+
+  const filters = {
+    minQty: parseFloat(lotSizeFilter.minQty),
+    stepSize: parseFloat(lotSizeFilter.stepSize),
+    minNotional: notionalFilter?.minNotional ? parseFloat(notionalFilter.minNotional) : 10, // Default to $10
+  };
+
+  symbolFiltersCache.set(symbol, filters);
+  return filters;
+}
+
+/**
+ * Round quantity to match Binance LOT_SIZE stepSize
+ */
+function roundToStepSize(quantity: number, stepSize: number): number {
+  const precision = stepSize.toString().split('.')[1]?.length || 0;
+  return Math.floor(quantity / stepSize) * stepSize;
 }
 
 /**
@@ -35,6 +83,69 @@ function calculateOrderQuantity(
 }
 
 /**
+ * Ensures minimum USDT balance by selling BTC if needed
+ */
+async function ensureMinimumUsdtBalance(
+  client: BinanceClient,
+  minUsdtBalance: number = 50,
+  targetUsdtBalance: number = 100
+): Promise<void> {
+  try {
+    const account = await client.getAccountInfo();
+    const usdtBalance = Number(account.balances.find((b) => b.asset === 'USDT')?.free || 0);
+    const btcBalance = Number(account.balances.find((b) => b.asset === 'BTC')?.free || 0);
+
+    // If USDT balance is sufficient, do nothing
+    if (usdtBalance >= minUsdtBalance) {
+      return;
+    }
+
+    // If no BTC to sell, log warning and return
+    if (btcBalance < 0.001) {
+      log.warn(`⚠ Insufficient USDT (${usdtBalance.toFixed(2)}) and no BTC to sell`);
+      return;
+    }
+
+    // Get current BTC price
+    const ticker = await client.getPrice('BTCUSDT');
+    const btcPrice = parseFloat(ticker.price);
+
+    // Calculate how much BTC to sell to reach target USDT balance
+    const usdtNeeded = targetUsdtBalance - usdtBalance;
+    const btcToSell = usdtNeeded / btcPrice;
+
+    // Get exchange info for LOT_SIZE filter
+    const filters = await getSymbolFilters(client, 'BTCUSDT');
+    const { stepSize, minQty } = filters;
+
+    // Round to step size and cap at 50% of BTC balance
+    const btcToSellRounded = roundToStepSize(Math.min(btcToSell, btcBalance * 0.5), stepSize);
+
+    // Check if we have enough BTC to sell
+    if (btcToSellRounded < minQty) {
+      log.warn(`⚠ Need to sell ${btcToSell.toFixed(8)} BTC but below minimum ${minQty}`);
+      return;
+    }
+
+    log.info(
+      `💱 Low USDT balance (${usdtBalance.toFixed(2)}). Selling ${btcToSellRounded} BTC (~$${(btcToSellRounded * btcPrice).toFixed(2)})`
+    );
+
+    // Sell BTC for USDT
+    const order = await client.createOrder({
+      symbol: 'BTCUSDT',
+      side: 'SELL',
+      type: 'MARKET',
+      quantity: btcToSellRounded.toFixed(8),
+    });
+
+    log.info(`✓ Sold ${btcToSellRounded} BTC for USDT. Order ID: ${order.orderId}`);
+  } catch (error) {
+    log.error('Failed to ensure minimum USDT balance:', error);
+  }
+}
+
+/**
  * Executes a BUY order for a decision.
  */
 async function executeBuyOrder(
@@ -45,24 +156,70 @@ async function executeBuyOrder(
   const { symbol, meta } = decision;
   const { currentPrice } = meta;
 
+  // Ensure we have minimum USDT balance by selling BTC if needed
+  await ensureMinimumUsdtBalance(client);
+
+  // Get current USDT balance
+  const account = await client.getAccountInfo();
+  const usdtBalance = Number(account.balances.find((b) => b.asset === 'USDT')?.free || 0);
+  const riskAmountUSDT = (usdtBalance * config.RISK_PER_TRADE_PERCENT) / 100;
+
   // Calculate stop loss and take profit prices
   const stopLossPrice = currentPrice * (1 - config.STOP_LOSS_PERCENT / 100);
   const takeProfitPrice = currentPrice * (1 + config.TAKE_PROFIT_PERCENT / 100);
 
   // Calculate position size based on risk
-  const quantity = calculateOrderQuantity(currentPrice, stopLossPrice, config.RISK_PER_TRADE_USDT);
-  const orderValueUSDT = quantity * currentPrice;
+  let quantity = calculateOrderQuantity(currentPrice, stopLossPrice, riskAmountUSDT);
 
-  log.info(`Attempting to buy ${quantity.toFixed(6)} ${symbol} @ ${currentPrice.toFixed(2)} USDT`);
+  // Apply LOT_SIZE filters from Binance
+  const filters = await getSymbolFilters(client, symbol);
+  quantity = roundToStepSize(quantity, filters.stepSize);
+
+  // Ensure minimum quantity
+  if (quantity < filters.minQty) {
+    log.warn(`Calculated quantity ${quantity} is below minimum ${filters.minQty} for ${symbol}`);
+    return {
+      symbol,
+      success: false,
+      reason: `Quantity too small (min: ${filters.minQty})`,
+    };
+  }
+
+  // Ensure minimum notional value
+  let orderValueUSDT = quantity * currentPrice;
+  if (orderValueUSDT < filters.minNotional) {
+    log.warn(
+      `Order value ${orderValueUSDT.toFixed(2)} USDT is below minimum notional ${filters.minNotional} for ${symbol}`
+    );
+    // Increase quantity to meet minimum notional
+    quantity = Math.ceil(filters.minNotional / currentPrice / filters.stepSize) * filters.stepSize;
+    orderValueUSDT = quantity * currentPrice;
+    log.info(
+      `Adjusted quantity to ${quantity} to meet minimum notional (new value: ${orderValueUSDT.toFixed(2)} USDT)`
+    );
+  }
+
+  // Check if we have sufficient balance for this order
+  if (usdtBalance < orderValueUSDT) {
+    log.warn(
+      `Insufficient balance: ${usdtBalance.toFixed(2)} USDT < ${orderValueUSDT.toFixed(2)} USDT needed for ${symbol}`
+    );
+    return {
+      symbol,
+      success: false,
+      reason: `Insufficient balance (have: ${usdtBalance.toFixed(2)} USDT, need: ${orderValueUSDT.toFixed(2)} USDT)`,
+    };
+  }
+  log.info(`Attempting to buy ${quantity} ${symbol} @ ${currentPrice.toFixed(2)} USDT`);
   log.info(
     `  Stop Loss: ${stopLossPrice.toFixed(2)} (${config.STOP_LOSS_PERCENT}%) | Take Profit: ${takeProfitPrice.toFixed(2)} (${config.TAKE_PROFIT_PERCENT}%)`
   );
   log.info(
-    `  Position Value: ${orderValueUSDT.toFixed(2)} USDT | Risk: ${config.RISK_PER_TRADE_USDT} USDT`
+    `  Balance: ${usdtBalance.toFixed(2)} USDT | Risk: ${riskAmountUSDT.toFixed(2)} USDT (${config.RISK_PER_TRADE_PERCENT}%) | Position: ${orderValueUSDT.toFixed(2)} USDT`
   );
 
   // Validate order against risk limits
-  const validation = await validateOrder(symbol, config.RISK_PER_TRADE_USDT, config);
+  const validation = await validateOrder(symbol, riskAmountUSDT, config);
   if (!validation.allowed) {
     log.warn(`Order rejected: ${validation.reason}`);
     return {
@@ -75,11 +232,15 @@ async function executeBuyOrder(
   try {
     // Create order via Binance
     const clientOrderId = `bot_${Date.now()}_${symbol}`;
+
+    // Determine precision from stepSize
+    const precision = filters.stepSize.toString().split('.')[1]?.length || 0;
+
     const request = {
       symbol,
       side: 'BUY' as const,
       type: 'MARKET' as const,
-      quantity: quantity.toFixed(6),
+      quantity: quantity.toFixed(precision),
     };
 
     const response = await client.createOrder(request);

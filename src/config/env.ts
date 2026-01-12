@@ -10,7 +10,7 @@ export type BotConfig = {
   MAX_OPEN_ORDERS_PER_SYMBOL: number;
   LOOP_MS: number;
   STRATEGY: 'simple' | 'marketcap'; // Strategy selection
-  RISK_PER_TRADE_USDT: number; // Amount to risk per trade (0-10 USD)
+  RISK_PER_TRADE_PERCENT: number; // Risk per trade as % of balance (e.g., 1 = 1%)
   STOP_LOSS_PERCENT: number; // Stop loss as percentage (e.g., 2 = 2%)
   TAKE_PROFIT_PERCENT: number; // Take profit as percentage (e.g., 10 = 10%)
   TRAILING_STOP_ENABLED: boolean; // Enable trailing stop loss
@@ -54,7 +54,7 @@ export function loadEnv(): BotConfig {
   const MANUAL_SYMBOLS = toList(process.env.MANUAL_SYMBOLS, 'BTCUSDT,ETHUSDT');
   const EXCLUDE_SYMBOLS = toList(
     process.env.EXCLUDE_SYMBOLS,
-    'BNBUPUSDT,BNBDOWNUSDT,BTCUPUSDT,BTCDOWNUSDT,ETHUPUSDT,ETHDOWNUSDT'
+    'BNBUPUSDT,BNBDOWNUSDT,BTCUPUSDT,BTCDOWNUSDT,ETHUPUSDT,ETHDOWNUSDT,MATICUSDT,FDUSDUSDT,USDCUSDT,TUSDUSDT,BUSDUSDT'
   );
 
   const cfg: BotConfig = {
@@ -67,9 +67,9 @@ export function loadEnv(): BotConfig {
     MAX_OPEN_ORDERS_PER_SYMBOL: toNum(process.env.MAX_OPEN_ORDERS_PER_SYMBOL, 1),
     LOOP_MS: toNum(process.env.LOOP_MS, 5000),
     STRATEGY: (process.env.STRATEGY ?? 'simple') as 'simple' | 'marketcap',
-    RISK_PER_TRADE_USDT: toNum(process.env.RISK_PER_TRADE_USDT, 10),
+    RISK_PER_TRADE_PERCENT: toNum(process.env.RISK_PER_TRADE_PERCENT, 1),
     STOP_LOSS_PERCENT: toNum(process.env.STOP_LOSS_PERCENT, 2),
-    TAKE_PROFIT_PERCENT: toNum(process.env.TAKE_PROFIT_PERCENT, 10),
+    TAKE_PROFIT_PERCENT: toNum(process.env.TAKE_PROFIT_PERCENT, 8),
     TRAILING_STOP_ENABLED: toBool(process.env.TRAILING_STOP_ENABLED, true),
     TRAILING_STOP_ACTIVATION_PERCENT: toNum(process.env.TRAILING_STOP_ACTIVATION_PERCENT, 5),
     TRAILING_STOP_DISTANCE_PERCENT: toNum(process.env.TRAILING_STOP_DISTANCE_PERCENT, 3),

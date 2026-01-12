@@ -127,3 +127,20 @@ export interface BinanceTicker24h {
   lastId: number;
   count: number;
 }
+
+export interface BinanceExchangeInfo {
+  symbols: {
+    symbol: string;
+    status: string;
+    baseAsset: string;
+    quoteAsset: string;
+    filters: Array<{
+      filterType: string;
+      minQty?: string;
+      maxQty?: string;
+      stepSize?: string;
+      minNotional?: string;
+      [key: string]: any;
+    }>;
+  }[];
+}

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { query } from '../db.js';
 
 export type OrderRow = {
@@ -24,7 +25,7 @@ export async function insertOrder(row: Partial<OrderRow>) {
     ) RETURNING *;
   `;
   const params = [
-    row.id,
+    row.id || randomUUID(),
     row.symbol,
     row.side,
     row.type,

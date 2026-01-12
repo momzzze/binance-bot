@@ -39,6 +39,18 @@ export interface Decision {
 export function computeSignal(symbolCandles: SymbolCandles): Decision {
   const { symbol, candles } = symbolCandles;
 
+  if (candles.length === 0) {
+    return {
+      symbol,
+      signal: 'HOLD',
+      score: 0,
+      meta: {
+        currentPrice: 0,
+        reason: 'No candle data available',
+      },
+    };
+  }
+
   if (candles.length < 50) {
     return {
       symbol,
@@ -72,14 +84,20 @@ export function computeSignal(symbolCandles: SymbolCandles): Decision {
   let score = 0;
   const reasons: string[] = [];
 
+  log.debug(
+    `${symbol}: Evaluating - price=${currentPrice.toFixed(2)}, SMA20=${sma20?.toFixed(2)}, SMA50=${sma50?.toFixed(2)}, EMA12=${ema12?.toFixed(2)}, EMA26=${ema26?.toFixed(2)}, RSI=${rsi?.toFixed(1)}`
+  );
+
   // SMA trend
   if (sma20 !== null && sma50 !== null) {
     if (sma20 > sma50) {
       score += 3;
       reasons.push('SMA20>SMA50');
+      log.debug(`  +3 SMA trend: 20(${sma20.toFixed(2)}) > 50(${sma50.toFixed(2)})`);
     } else if (sma20 < sma50) {
       score -= 3;
       reasons.push('SMA20<SMA50');
+      log.debug(`  -3 SMA trend: 20(${sma20.toFixed(2)}) < 50(${sma50.toFixed(2)})`);
     }
   }
 
@@ -88,9 +106,11 @@ export function computeSignal(symbolCandles: SymbolCandles): Decision {
     if (ema12 > ema26) {
       score += 2;
       reasons.push('EMA12>EMA26');
+      log.debug(`  +2 EMA momentum: 12(${ema12.toFixed(2)}) > 26(${ema26.toFixed(2)})`);
     } else if (ema12 < ema26) {
       score -= 2;
       reasons.push('EMA12<EMA26');
+      log.debug(`  -2 EMA momentum: 12(${ema12.toFixed(2)}) < 26(${ema26.toFixed(2)})`);
     }
   }
 
@@ -99,15 +119,19 @@ export function computeSignal(symbolCandles: SymbolCandles): Decision {
     if (rsi < 30) {
       score += 2;
       reasons.push('RSI<30 (oversold)');
+      log.debug(`  +2 RSI oversold: ${rsi.toFixed(1)} < 30`);
     } else if (rsi > 70) {
       score -= 2;
       reasons.push('RSI>70 (overbought)');
+      log.debug(`  -2 RSI overbought: ${rsi.toFixed(1)} > 70`);
     } else if (rsi < 50) {
       score += 1;
       reasons.push('RSI<50');
+      log.debug(`  +1 RSI mild oversold: ${rsi.toFixed(1)} < 50`);
     } else {
       score -= 1;
       reasons.push('RSI>50');
+      log.debug(`  -1 RSI mild overbought: ${rsi.toFixed(1)} > 50`);
     }
   }
 
@@ -115,13 +139,16 @@ export function computeSignal(symbolCandles: SymbolCandles): Decision {
 
   // Determine signal based on score
   let signal: Signal = 'HOLD';
-  if (score >= 4) {
+  if (score >= 2) {
     signal = 'BUY';
-  } else if (score <= -4) {
+  } else if (score <= -2) {
     signal = 'SELL';
   }
 
-  log.debug(`${symbol}: signal=${signal}, score=${score}, price=${currentPrice.toFixed(2)}`);
+  // Log actionable signals (BUY/SELL)
+  if (signal !== 'HOLD') {
+    log.debug(`${symbol}: signal=${signal}, score=${score}, price=${currentPrice.toFixed(2)}`);
+  }
 
   return { symbol, signal, score, meta };
 }

@@ -51,6 +51,18 @@ export async function runBot(client: BinanceClient, config: BotConfig): Promise<
     try {
       log.info(`\n━━━ Iteration ${iteration} ━━━`);
 
+      // Get account balance
+      try {
+        const accountInfo = await client.getAccountInfo();
+        const usdtBalance = accountInfo.balances.find((b) => b.asset === 'USDT');
+        const btcBalance = accountInfo.balances.find((b) => b.asset === 'BTC');
+        log.info(
+          `💰 Balance: ${usdtBalance ? `${Number(usdtBalance.free).toFixed(2)} USDT` : '0 USDT'}${btcBalance ? ` | ${Number(btcBalance.free).toFixed(6)} BTC` : ''}`
+        );
+      } catch (error) {
+        log.debug('Failed to fetch account balance:', error);
+      }
+
       // Check if trading is globally enabled
       const tradingCheck = await checkGlobalTrading();
       if (!tradingCheck.allowed) {
@@ -64,11 +76,9 @@ export async function runBot(client: BinanceClient, config: BotConfig): Promise<
       symbolSource = symbolSelection.source;
 
       // Monitor open positions for stop loss / take profit
-      log.info('👀 Monitoring open positions...');
       await monitorPositions(client, config);
 
       // 1. Fetch market data
-      log.info('📊 Fetching market data...');
       const symbolCandles = await fetchMultiSymbolCandles(
         client,
         currentSymbols,
@@ -135,15 +145,15 @@ export async function runBot(client: BinanceClient, config: BotConfig): Promise<
         if (failed.length > 0) {
           log.warn(`✗ ${failed.length} orders failed`);
         }
-      } else {
-        log.info('No actionable signals - no orders placed');
       }
 
       // 4. Sleep until next iteration
       const loopDuration = Date.now() - loopStart;
       const sleepTime = Math.max(0, config.LOOP_MS - loopDuration);
 
-      log.info(`Loop completed in ${loopDuration}ms - sleeping ${sleepTime}ms`);
+      if (loopDuration > config.LOOP_MS) {
+        log.warn(`Loop took ${loopDuration}ms (longer than ${config.LOOP_MS}ms interval)`);
+      }
       await sleep(sleepTime);
     } catch (error) {
       log.error('Error in bot loop:', error);
