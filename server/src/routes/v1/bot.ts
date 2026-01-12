@@ -117,6 +117,120 @@ router.get('/stats/daily', async (req, res) => {
 });
 
 /**
+ * POST /bot/stats/daily/save - Save current day's stats to history
+ */
+router.post('/stats/daily/save', async (req, res) => {
+  try {
+    const { query: dbQuery } = await import('../../modules/db/db.js');
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const result = await dbQuery(
+      `
+      SELECT 
+        COUNT(*) as total_trades,
+        SUM(CASE WHEN pnl_usdt > 0 THEN 1 ELSE 0 END) as winning_trades,
+        SUM(CASE WHEN pnl_usdt < 0 THEN 1 ELSE 0 END) as losing_trades,
+        SUM(pnl_usdt) as total_pnl_usdt,
+        SUM(COALESCE(entry_commission, 0) + COALESCE(exit_commission, 0)) as total_commission_usdt,
+        AVG(pnl_percent) as avg_pnl_percent,
+        MAX(pnl_usdt) as best_trade_usdt,
+        MIN(pnl_usdt) as worst_trade_usdt
+      FROM positions
+      WHERE status IN ('CLOSED', 'STOPPED_OUT', 'TAKE_PROFIT')
+        AND closed_at >= $1
+        AND closed_at < $2
+    `,
+      [today.toISOString(), new Date(today.getTime() + 86400000).toISOString()]
+    );
+
+    const stats = result.rows[0];
+    const totalTrades = parseInt(stats.total_trades) || 0;
+    const winningTrades = parseInt(stats.winning_trades) || 0;
+    const totalPnl = parseFloat(stats.total_pnl_usdt) || 0;
+    const totalCommission = parseFloat(stats.total_commission_usdt) || 0;
+
+    await dbQuery(
+      `
+      INSERT INTO daily_stats (
+        trade_date, total_trades, winning_trades, losing_trades, win_rate,
+        total_pnl_usdt, total_commission_usdt, net_pnl_usdt, avg_pnl_percent,
+        best_trade_usdt, worst_trade_usdt
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      ON CONFLICT (trade_date) DO UPDATE SET
+        total_trades = EXCLUDED.total_trades,
+        winning_trades = EXCLUDED.winning_trades,
+        losing_trades = EXCLUDED.losing_trades,
+        win_rate = EXCLUDED.win_rate,
+        total_pnl_usdt = EXCLUDED.total_pnl_usdt,
+        total_commission_usdt = EXCLUDED.total_commission_usdt,
+        net_pnl_usdt = EXCLUDED.net_pnl_usdt,
+        avg_pnl_percent = EXCLUDED.avg_pnl_percent,
+        best_trade_usdt = EXCLUDED.best_trade_usdt,
+        worst_trade_usdt = EXCLUDED.worst_trade_usdt,
+        updated_at = NOW()
+    `,
+      [
+        today.toISOString().split('T')[0],
+        totalTrades,
+        winningTrades,
+        parseInt(stats.losing_trades) || 0,
+        totalTrades > 0 ? ((winningTrades / totalTrades) * 100).toFixed(2) : 0,
+        totalPnl,
+        totalCommission,
+        totalPnl - totalCommission,
+        parseFloat(stats.avg_pnl_percent) || 0,
+        parseFloat(stats.best_trade_usdt) || 0,
+        parseFloat(stats.worst_trade_usdt) || 0,
+      ]
+    );
+
+    log.info(`💾 Saved daily stats for ${today.toISOString().split('T')[0]}`);
+    res.json({ message: 'Daily stats saved successfully' });
+  } catch (error) {
+    log.error('Failed to save daily stats:', error);
+    res.status(500).json({ error: 'Failed to save daily stats' });
+  }
+});
+
+/**
+ * GET /bot/stats/history - Get historical daily stats
+ */
+router.get('/stats/history', async (req, res) => {
+  try {
+    const { query: dbQuery } = await import('../../modules/db/db.js');
+    const days = Math.min(parseInt(req.query.days as string) || 30, 365);
+
+    const result = await dbQuery(
+      `
+      SELECT 
+        trade_date,
+        total_trades,
+        winning_trades,
+        losing_trades,
+        win_rate,
+        total_pnl_usdt,
+        total_commission_usdt,
+        net_pnl_usdt,
+        avg_pnl_percent,
+        best_trade_usdt,
+        worst_trade_usdt
+      FROM daily_stats
+      ORDER BY trade_date DESC
+      LIMIT $1
+    `,
+      [days]
+    );
+
+    res.json({ history: result.rows });
+  } catch (error) {
+    log.error('Failed to fetch stats history:', error);
+    res.status(500).json({ error: 'Failed to fetch stats history' });
+  }
+});
+
+/**
  * POST /bot/start - Start the bot
  */
 router.post('/start', async (req, res) => {
