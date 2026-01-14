@@ -1,4 +1,5 @@
 import { query } from '../db.js';
+import { updateDailyStats } from './daily_stats.js';
 
 export type PositionRow = {
   id: string;
@@ -194,6 +195,10 @@ export async function closePosition(
     RETURNING *;
   `;
   const res = await query<PositionRow>(sql, [id, status, exitOrderId]);
+
+  // Update daily stats for today
+  await updateDailyStats(new Date());
+
   return res.rows[0];
 }
 

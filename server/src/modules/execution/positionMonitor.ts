@@ -8,6 +8,7 @@ import {
   type PositionRow,
 } from '../db/queries/positions.js';
 import { insertOrder } from '../db/queries/orders.js';
+import { getActiveStrategyConfig } from '../db/queries/strategy_config.js';
 import { createLogger } from '../../services/logger.js';
 
 const log = createLogger('positionMonitor');
@@ -18,6 +19,16 @@ const log = createLogger('positionMonitor');
 export async function monitorPositions(client: BinanceClient, config: BotConfig): Promise<void> {
   const openPositions = await getOpenPositions();
 
+  // Pull live strategy config so FE settings apply without restart
+  const strategy = await getActiveStrategyConfig();
+  const trailingEnabled = strategy ? strategy.trailing_stop_enabled : config.TRAILING_STOP_ENABLED;
+  const trailingActivation = strategy
+    ? Number(strategy.trailing_stop_activation_percent)
+    : config.TRAILING_STOP_ACTIVATION_PERCENT;
+  const trailingDistance = strategy
+    ? Number(strategy.trailing_stop_distance_percent)
+    : config.TRAILING_STOP_DISTANCE_PERCENT;
+
   if (openPositions.length === 0) {
     return;
   }
@@ -26,7 +37,11 @@ export async function monitorPositions(client: BinanceClient, config: BotConfig)
 
   for (const position of openPositions) {
     try {
-      await checkPosition(client, position, config);
+      await checkPosition(client, position, config, {
+        trailingEnabled,
+        trailingActivation,
+        trailingDistance,
+      });
     } catch (error) {
       log.error(`Error checking position ${position.id} (${position.symbol}):`, error);
     }
@@ -39,7 +54,8 @@ export async function monitorPositions(client: BinanceClient, config: BotConfig)
 async function checkPosition(
   client: BinanceClient,
   position: PositionRow,
-  config: BotConfig
+  config: BotConfig,
+  trailing: { trailingEnabled: boolean; trailingActivation: number; trailingDistance: number }
 ): Promise<void> {
   const { symbol } = position;
 
@@ -78,8 +94,13 @@ async function checkPosition(
   }
 
   // Check TRAILING STOP
-  if (position.trailing_stop_enabled && config.TRAILING_STOP_ENABLED) {
-    await checkTrailingStop(position, currentPrice, config);
+  if (position.trailing_stop_enabled && trailing.trailingEnabled) {
+    await checkTrailingStop(
+      position,
+      currentPrice,
+      trailing.trailingActivation,
+      trailing.trailingDistance
+    );
   }
 }
 
@@ -89,7 +110,8 @@ async function checkPosition(
 async function checkTrailingStop(
   position: PositionRow,
   currentPrice: number,
-  config: BotConfig
+  trailingActivation: number,
+  trailingDistance: number
 ): Promise<void> {
   const { symbol, entry_price, highest_price, stop_loss_price, initial_stop_loss_price } = position;
 
@@ -97,12 +119,12 @@ async function checkTrailingStop(
   const highestPriceValue = highest_price ?? entry_price;
 
   // Only activate trailing stop if we've hit the activation threshold
-  if (pnlPercent < config.TRAILING_STOP_ACTIVATION_PERCENT) {
+  if (pnlPercent < trailingActivation) {
     return;
   }
 
   // Calculate new trailing stop based on highest price
-  const trailingStopPrice = highestPriceValue * (1 - config.TRAILING_STOP_DISTANCE_PERCENT / 100);
+  const trailingStopPrice = highestPriceValue * (1 - trailingDistance / 100);
 
   // IMPORTANT: Stop loss should NEVER be below entry price once profitable
   // This ensures we at least break even (no loss of capital)

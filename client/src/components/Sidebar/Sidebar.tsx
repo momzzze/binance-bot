@@ -12,6 +12,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
     { path: '/dashboard', label: 'Dashboard', icon: '📊' },
     { path: '/positions', label: 'Positions', icon: '💼' },
     { path: '/trades', label: 'Trades', icon: '📈' },
+    { path: '/calendar', label: 'Calendar', icon: '📅' },
     { path: '/charts', label: 'Charts', icon: '📉' },
     { path: '/settings', label: 'Settings', icon: '⚙️' },
   ];

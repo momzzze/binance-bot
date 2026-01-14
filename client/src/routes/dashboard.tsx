@@ -5,6 +5,9 @@ import {
   type BotStatus,
   type Position,
   type DailyStats,
+  type AccountInfo,
+  type Balance,
+  DailyHistory,
 } from '../services/bot';
 import { tradesService, type TradeStats } from '../services/trades';
 
@@ -17,6 +20,7 @@ function Dashboard() {
   const [bot, setBot] = useState<BotStatus | null>(null);
   const [stats, setStats] = useState<TradeStats | null>(null);
   const [dailyStats, setDailyStats] = useState<DailyStats | null>(null);
+  const [account, setAccount] = useState<AccountInfo | null>(null);
   const [summaryTime, setSummaryTime] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,14 +29,16 @@ function Dashboard() {
     setLoading(true);
     setError(null);
     try {
-      const [botRes, summaryRes, dailyRes] = await Promise.all([
+      const [botRes, summaryRes, dailyRes, accountRes] = await Promise.all([
         botService.getStatus(),
         tradesService.getSummary(),
         botService.getDailyStats(),
+        botService.getAccount(),
       ]);
       setBot(botRes);
       setStats(summaryRes.overall);
       setDailyStats(dailyRes.today);
+      setAccount(accountRes);
       setSummaryTime(summaryRes.timestamp);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load dashboard');
@@ -114,6 +120,26 @@ function Dashboard() {
       </section>
 
       <section style={section}>
+        <h2>Account Assets</h2>
+        {account && (
+          <div style={{ marginBottom: '0.75rem', color: '#9aa3c4' }}>
+            <span>Trading: {account.canTrade ? '✓' : '✗'} | </span>
+            <span>Withdraw: {account.canWithdraw ? '✓' : '✗'} | </span>
+            <span>Deposit: {account.canDeposit ? '✓' : '✗'}</span>
+          </div>
+        )}
+        {account && account.balances.length > 0 ? (
+          <div style={grid(220)}>
+            {account.balances.slice(0, 20).map((balance) => (
+              <AssetCard key={balance.asset} balance={balance} />
+            ))}
+          </div>
+        ) : (
+          <p style={{ color: '#9aa3c4' }}>No assets found or loading...</p>
+        )}
+      </section>
+
+      <section style={section}>
         <h2>Bot Status</h2>
         <div style={grid(180)}>
           <Card label="Running" value={bot?.running ? 'Yes' : 'No'} />
@@ -177,6 +203,96 @@ function Card({
   );
 }
 
+function AssetCard({ balance }: { balance: Balance }) {
+  const decimals = ['BTC', 'ETH'].includes(balance.asset) ? 6 : 2;
+  const hasLocked = balance.locked > 0;
+  const hasPnl = balance.unrealizedPnl !== 0;
+
+  return (
+    <div
+      style={{
+        ...card,
+        border: balance.isTrading ? '1px solid #f3ba2f' : '1px solid #232a4a',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '0.35rem',
+        }}
+      >
+        <p style={{ color: '#9aa3c4', fontWeight: 500 }}>{balance.asset}</p>
+        {balance.isTrading && (
+          <span
+            style={{
+              fontSize: '0.65rem',
+              padding: '0.15rem 0.4rem',
+              background: '#f3ba2f',
+              color: '#0a0e27',
+              borderRadius: '4px',
+              fontWeight: 600,
+            }}
+          >
+            TRADING
+          </span>
+        )}
+      </div>
+      <p
+        style={{
+          color: '#7ec8ff',
+          fontSize: '1.1rem',
+          fontWeight: 600,
+          marginBottom: hasPnl || hasLocked ? '0.25rem' : 0,
+        }}
+      >
+        {balance.total.toFixed(decimals)}
+      </p>
+      {hasLocked && (
+        <p
+          style={{
+            fontSize: '0.75rem',
+            color: '#9aa3c4',
+            marginBottom: '0.15rem',
+          }}
+        >
+          Locked: {balance.locked.toFixed(decimals)}
+        </p>
+      )}
+      {hasPnl && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.4rem',
+            marginTop: '0.15rem',
+          }}
+        >
+          <span
+            style={{
+              fontSize: '0.7rem',
+              padding: '0.15rem 0.35rem',
+              background: balance.unrealizedPnl >= 0 ? '#9be28a' : '#ff7070',
+              color: '#0a0e27',
+              borderRadius: '4px',
+              fontWeight: 700,
+            }}
+          >
+            {balance.unrealizedPnl >= 0 ? '▲' : '▼'}{' '}
+            {balance.unrealizedPnl >= 0 ? '+' : ''}
+            {balance.unrealizedPnl.toFixed(2)}
+          </span>
+          <span style={{ fontSize: '0.7rem', color: '#9aa3c4' }}>
+            USDT
+            {balance.activePositions > 1 && ` (${balance.activePositions}x)`}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const section: CSSProperties = {
   marginTop: '1.25rem',
 };
@@ -204,3 +320,282 @@ const button = (bg: string): CSSProperties => ({
   fontWeight: 600,
   marginBottom: '0.75rem',
 });
+
+function PnLCalendar({ history }: { history: DailyHistory[] }) {
+  const [hoveredDate, setHoveredDate] = useState<string | null>(null);
+  const [hoveredData, setHoveredData] = useState<DailyHistory | null>(null);
+
+  // Group by month
+  const months = new Map<string, DailyHistory[]>();
+  const statsMap = new Map(history.map((h) => [h.trade_date, h]));
+
+  // Get current and past months
+  const today = new Date();
+  for (let i = 2; i >= 0; i--) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+      2,
+      '0'
+    )}`;
+    months.set(key, []);
+  }
+
+  // Fill in dates
+  history.forEach((h) => {
+    const [year, month] = h.trade_date.split('-');
+    const key = `${year}-${month}`;
+    if (months.has(key)) {
+      months.get(key)!.push(h);
+    }
+  });
+
+  return (
+    <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
+      {Array.from(months.entries()).map(([monthKey, days]) => {
+        const [year, month] = monthKey.split('-');
+        const monthDate = new Date(parseInt(year), parseInt(month) - 1);
+        const monthName = monthDate.toLocaleDateString('en-US', {
+          month: 'long',
+          year: 'numeric',
+        });
+        const firstDay = new Date(
+          monthDate.getFullYear(),
+          monthDate.getMonth(),
+          1
+        );
+        const lastDay = new Date(
+          monthDate.getFullYear(),
+          monthDate.getMonth() + 1,
+          0
+        );
+        const daysInMonth = lastDay.getDate();
+        const startingDayOfWeek = firstDay.getDay();
+
+        return (
+          <div key={monthKey} style={calendarMonth}>
+            <h3
+              style={{
+                margin: '0 0 1rem 0',
+                color: '#9aa3c4',
+                fontSize: '1rem',
+              }}
+            >
+              {monthName}
+            </h3>
+            <div style={calendarDaysHeader}>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                <div key={day} style={calendarDayHeaderCell}>
+                  {day}
+                </div>
+              ))}
+            </div>
+            <div style={calendarDaysGrid}>
+              {Array.from({ length: startingDayOfWeek }).map((_, i) => (
+                <div key={`empty-${i}`} />
+              ))}
+              {Array.from({ length: daysInMonth }).map((_, i) => {
+                const dayNum = i + 1;
+                const dateStr = `${year}-${month}-${String(dayNum).padStart(
+                  2,
+                  '0'
+                )}`;
+                const dayData = statsMap.get(dateStr);
+                const isToday = today.toISOString().split('T')[0] === dateStr;
+
+                let bgColor = '#1a1f3a';
+                let textColor = '#9aa3c4';
+
+                if (dayData) {
+                  if (dayData.total_pnl_usdt > 0) {
+                    bgColor = '#1a3a2a';
+                    textColor = '#9be28a';
+                  } else if (dayData.total_pnl_usdt < 0) {
+                    bgColor = '#3a1a2a';
+                    textColor = '#ff7070';
+                  }
+                }
+
+                return (
+                  <div
+                    key={dayNum}
+                    style={{
+                      ...calendarDayCell,
+                      backgroundColor: isToday ? '#2a3f5f' : bgColor,
+                      border: isToday
+                        ? '2px solid #7ec8ff'
+                        : '1px solid #232a4a',
+                      cursor: dayData ? 'pointer' : 'default',
+                    }}
+                    onMouseEnter={() => {
+                      if (dayData) {
+                        setHoveredDate(dateStr);
+                        setHoveredData(dayData);
+                      }
+                    }}
+                    onMouseLeave={() => {
+                      setHoveredDate(null);
+                      setHoveredData(null);
+                    }}
+                  >
+                    <span
+                      style={{
+                        color: textColor,
+                        fontSize: '0.9rem',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {dayNum}
+                    </span>
+                    {dayData && (
+                      <span
+                        style={{
+                          color: textColor,
+                          fontSize: '0.7rem',
+                          marginTop: '0.2rem',
+                        }}
+                      >
+                        {dayData.total_pnl_usdt > 0 ? '+' : ''}
+                        {dayData.total_pnl_usdt.toFixed(0)}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+
+      {hoveredData && (
+        <div style={calendarTooltip}>
+          <p
+            style={{
+              margin: '0 0 0.5rem 0',
+              color: '#f3ba2f',
+              fontWeight: 600,
+            }}
+          >
+            {hoveredDate}
+          </p>
+          <p
+            style={{
+              margin: '0.25rem 0',
+              color: '#e6e9f5',
+              fontSize: '0.85rem',
+            }}
+          >
+            Trades: <strong>{hoveredData.total_trades}</strong>
+          </p>
+          <p
+            style={{
+              margin: '0.25rem 0',
+              color: '#e6e9f5',
+              fontSize: '0.85rem',
+            }}
+          >
+            Wins:{' '}
+            <strong style={{ color: '#9be28a' }}>
+              {hoveredData.winning_trades}
+            </strong>{' '}
+            / Losses:{' '}
+            <strong style={{ color: '#ff7070' }}>
+              {hoveredData.losing_trades}
+            </strong>
+          </p>
+          <p
+            style={{
+              margin: '0.25rem 0',
+              color: '#e6e9f5',
+              fontSize: '0.85rem',
+            }}
+          >
+            Win Rate: <strong>{hoveredData.win_rate}%</strong>
+          </p>
+          <p
+            style={{
+              margin: '0.25rem 0',
+              color: hoveredData.total_pnl_usdt >= 0 ? '#9be28a' : '#ff7070',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+            }}
+          >
+            PnL: {hoveredData.total_pnl_usdt >= 0 ? '+' : ''}
+            {hoveredData.total_pnl_usdt.toFixed(2)} USDT
+          </p>
+          <p
+            style={{
+              margin: '0.25rem 0',
+              color: '#9aa3c4',
+              fontSize: '0.75rem',
+            }}
+          >
+            Best: +{hoveredData.best_trade_usdt.toFixed(2)} USDT
+          </p>
+          <p
+            style={{
+              margin: '0.25rem 0',
+              color: '#9aa3c4',
+              fontSize: '0.75rem',
+            }}
+          >
+            Worst: {hoveredData.worst_trade_usdt.toFixed(2)} USDT
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const calendarMonth: CSSProperties = {
+  padding: '1rem',
+  background: '#151a33',
+  border: '1px solid #232a4a',
+  borderRadius: '12px',
+  minWidth: '250px',
+};
+
+const calendarDaysHeader: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(7, 1fr)',
+  gap: '0.3rem',
+  marginBottom: '0.5rem',
+};
+
+const calendarDayHeaderCell: CSSProperties = {
+  textAlign: 'center',
+  color: '#9aa3c4',
+  fontSize: '0.75rem',
+  fontWeight: 600,
+  padding: '0.5rem 0',
+};
+
+const calendarDaysGrid: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(7, 1fr)',
+  gap: '0.3rem',
+};
+
+const calendarDayCell: CSSProperties = {
+  aspectRatio: '1',
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: '0.4rem',
+  borderRadius: '8px',
+  fontSize: '0.8rem',
+  position: 'relative',
+};
+
+const calendarTooltip: CSSProperties = {
+  position: 'fixed',
+  bottom: '20px',
+  right: '20px',
+  background: '#232a4a',
+  border: '1px solid #9aa3c4',
+  borderRadius: '12px',
+  padding: '1rem',
+  minWidth: '280px',
+  zIndex: 1000,
+  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
+};

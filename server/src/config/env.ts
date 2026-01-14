@@ -7,8 +7,10 @@ export type BotConfig = {
   INTERVAL: string; // e.g., '1m'
   TRADING_ENABLED: boolean;
   BOT_KILL_SWITCH: boolean;
+  BASE_ASSET: string; // Base trading asset (USDC or USDT)
   MAX_ORDER_USDT: number;
   MAX_OPEN_ORDERS_PER_SYMBOL: number;
+  MAX_TRADING_CAPITAL_PERCENT: number; // Max % of base asset to use for trading (e.g., 80 = 80%)
   LOOP_MS: number;
   STRATEGY: 'simple' | 'marketcap'; // Strategy selection
   RISK_PER_TRADE_PERCENT: number; // Risk per trade as % of balance (e.g., 1 = 1%)
@@ -51,11 +53,11 @@ function toList(val: string | undefined, def: string): string[] {
 export function loadEnv(): BotConfig {
   dotenv.config();
 
-  const SYMBOLS = toList(process.env.SYMBOLS, 'BTCUSDT,ETHUSDT');
-  const MANUAL_SYMBOLS = toList(process.env.MANUAL_SYMBOLS, 'BTCUSDT,ETHUSDT');
+  const SYMBOLS = toList(process.env.SYMBOLS, 'BTCUSDC,ETHUSDC');
+  const MANUAL_SYMBOLS = toList(process.env.MANUAL_SYMBOLS, 'BTCUSDC,ETHUSDC');
   const EXCLUDE_SYMBOLS = toList(
     process.env.EXCLUDE_SYMBOLS,
-    'BNBUPUSDT,BNBDOWNUSDT,BTCUPUSDT,BTCDOWNUSDT,ETHUPUSDT,ETHDOWNUSDT,MATICUSDT,FDUSDUSDT,USDCUSDT,TUSDUSDT,BUSDUSDT'
+    'BNBUPUSDC,BNBDOWNUSDC,BTCUPUSDC,BTCDOWNUSDC,ETHUPUSDC,ETHDOWNUSDC,USDCUSDT,TUSDUSDC,BUSDUSDC,FDUSDUSDC'
   );
 
   const cfg: BotConfig = {
@@ -68,8 +70,10 @@ export function loadEnv(): BotConfig {
     INTERVAL: process.env.INTERVAL ?? '1m',
     TRADING_ENABLED: toBool(process.env.TRADING_ENABLED, false),
     BOT_KILL_SWITCH: toBool(process.env.BOT_KILL_SWITCH, false),
+    BASE_ASSET: process.env.BASE_ASSET ?? 'USDC',
     MAX_ORDER_USDT: toNum(process.env.MAX_ORDER_USDT, 20),
     MAX_OPEN_ORDERS_PER_SYMBOL: toNum(process.env.MAX_OPEN_ORDERS_PER_SYMBOL, 1),
+    MAX_TRADING_CAPITAL_PERCENT: toNum(process.env.MAX_TRADING_CAPITAL_PERCENT, 80),
     LOOP_MS: toNum(process.env.LOOP_MS, 5000),
     STRATEGY: (process.env.STRATEGY ?? 'simple') as 'simple' | 'marketcap',
     RISK_PER_TRADE_PERCENT: toNum(process.env.RISK_PER_TRADE_PERCENT, 1),

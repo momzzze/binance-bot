@@ -38,8 +38,47 @@ export type DailyStats = {
   worst_trade_usdt: number;
 };
 
+export type DailyHistory = {
+  trade_date: string;
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  win_rate: string | number;
+  total_pnl_usdt: number;
+  total_commission_usdt: number;
+  net_pnl_usdt: number;
+  avg_pnl_percent: number;
+  best_trade_usdt: number;
+  worst_trade_usdt: number;
+  total_pnl_usdc?: number;
+  total_commission_usdc?: number;
+  net_pnl_usdc?: number;
+  best_trade_usdc?: number;
+  worst_trade_usdc?: number;
+};
+
+export type Balance = {
+  asset: string;
+  free: number;
+  locked: number;
+  total: number;
+  isTrading: boolean;
+  activePositions: number;
+  unrealizedPnl: number;
+  isKeyAsset: boolean;
+};
+
+export type AccountInfo = {
+  balances: Balance[];
+  canTrade: boolean;
+  canWithdraw: boolean;
+  canDeposit: boolean;
+  updateTime: number;
+};
+
 export const botService = {
   getStatus: () => api<BotStatus>('/bot/status'),
+  getAccount: () => api<AccountInfo>('/bot/account'),
   start: () =>
     api<{ message: string; running: boolean }>('/bot/start', {
       method: 'POST',
@@ -72,4 +111,6 @@ export const botService = {
     );
   },
   getDailyStats: () => api<{ today: DailyStats }>('/bot/stats/daily'),
+  getStatsHistory: (days: number = 90) =>
+    api<{ history: DailyHistory[] }>(`/bot/stats/history?days=${days}`),
 };

@@ -54,10 +54,12 @@ export async function runBot(client: BinanceClient, config: BotConfig): Promise<
       // Get account balance
       try {
         const accountInfo = await client.getAccountInfo();
-        const usdtBalance = accountInfo.balances.find((b) => b.asset === 'USDT');
+        const baseAsset = config.BASE_ASSET || 'USDC';
+        const baseBalance = accountInfo.balances.find((b) => b.asset === baseAsset);
         const btcBalance = accountInfo.balances.find((b) => b.asset === 'BTC');
+        const bnbBalance = accountInfo.balances.find((b) => b.asset === 'BNB');
         log.info(
-          `💰 Balance: ${usdtBalance ? `${Number(usdtBalance.free).toFixed(2)} USDT` : '0 USDT'}${btcBalance ? ` | ${Number(btcBalance.free).toFixed(6)} BTC` : ''}`
+          `💰 Balance: ${baseBalance ? `${Number(baseBalance.free).toFixed(2)} ${baseAsset}` : `0 ${baseAsset}`}${btcBalance ? ` | ${Number(btcBalance.free).toFixed(6)} BTC` : ''}${bnbBalance ? ` | ${Number(bnbBalance.free).toFixed(4)} BNB` : ''}`
         );
       } catch (error) {
         log.debug('Failed to fetch account balance:', error);

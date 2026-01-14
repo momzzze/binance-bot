@@ -1,6 +1,7 @@
 import type { BinanceClient } from '../exchange/binanceClient.js';
 import type { BotConfig } from '../../config/env.js';
 import type { Decision } from '../strategy/simpleStrategy.js';
+import { getActiveStrategyConfig } from '../db/queries/strategy_config.js';
 import { validateOrder } from '../risk/riskEngine.js';
 import { insertOrder, updateOrderStatus } from '../db/queries/orders.js';
 import { createPosition } from '../db/queries/positions.js';
@@ -65,88 +66,24 @@ function roundToStepSize(quantity: number, stepSize: number): number {
 }
 
 /**
- * Calculates order quantity based on risk per trade and stop loss distance.
+ * Calculate order quantity based on risk management.
  * Position size = Risk amount / (Entry price - Stop loss price)
  */
 function calculateOrderQuantity(
-  currentPrice: number,
+  entryPrice: number,
   stopLossPrice: number,
-  riskPerTradeUSDT: number
+  riskAmountUSDT: number
 ): number {
-  const stopLossDistance = Math.abs(currentPrice - stopLossPrice);
-  if (stopLossDistance === 0) {
-    // Fallback if no stop loss
-    return riskPerTradeUSDT / currentPrice;
+  const priceRiskPerUnit = entryPrice - stopLossPrice;
+  if (priceRiskPerUnit <= 0) {
+    throw new Error('Stop loss price must be below entry price');
   }
-  // Position size = Risk / Stop distance
-  return riskPerTradeUSDT / stopLossDistance;
+  return riskAmountUSDT / priceRiskPerUnit;
 }
 
 /**
- * Ensures minimum USDT balance by selling BTC if needed
- */
-async function ensureMinimumUsdtBalance(
-  client: BinanceClient,
-  minUsdtBalance: number = 50,
-  targetUsdtBalance: number = 100
-): Promise<void> {
-  try {
-    const account = await client.getAccountInfo();
-    const usdtBalance = Number(account.balances.find((b) => b.asset === 'USDT')?.free || 0);
-    const btcBalance = Number(account.balances.find((b) => b.asset === 'BTC')?.free || 0);
-
-    // If USDT balance is sufficient, do nothing
-    if (usdtBalance >= minUsdtBalance) {
-      return;
-    }
-
-    // If no BTC to sell, log warning and return
-    if (btcBalance < 0.001) {
-      log.warn(`⚠ Insufficient USDT (${usdtBalance.toFixed(2)}) and no BTC to sell`);
-      return;
-    }
-
-    // Get current BTC price
-    const ticker = await client.getPrice('BTCUSDT');
-    const btcPrice = parseFloat(ticker.price);
-
-    // Calculate how much BTC to sell to reach target USDT balance
-    const usdtNeeded = targetUsdtBalance - usdtBalance;
-    const btcToSell = usdtNeeded / btcPrice;
-
-    // Get exchange info for LOT_SIZE filter
-    const filters = await getSymbolFilters(client, 'BTCUSDT');
-    const { stepSize, minQty } = filters;
-
-    // Round to step size and cap at 50% of BTC balance
-    const btcToSellRounded = roundToStepSize(Math.min(btcToSell, btcBalance * 0.5), stepSize);
-
-    // Check if we have enough BTC to sell
-    if (btcToSellRounded < minQty) {
-      log.warn(`⚠ Need to sell ${btcToSell.toFixed(8)} BTC but below minimum ${minQty}`);
-      return;
-    }
-
-    log.info(
-      `💱 Low USDT balance (${usdtBalance.toFixed(2)}). Selling ${btcToSellRounded} BTC (~$${(btcToSellRounded * btcPrice).toFixed(2)})`
-    );
-
-    // Sell BTC for USDT
-    const order = await client.createOrder({
-      symbol: 'BTCUSDT',
-      side: 'SELL',
-      type: 'MARKET',
-      quantity: btcToSellRounded.toFixed(8),
-    });
-
-    log.info(`✓ Sold ${btcToSellRounded} BTC for USDT. Order ID: ${order.orderId}`);
-  } catch (error) {
-    log.error('Failed to ensure minimum USDT balance:', error);
-  }
-}
-
-/**
- * Executes a BUY order for a decision.
+ * Calculates order quantity based on risk per trade and stop loss distance.
+ * Position size = Risk amount / (Entry price - Stop loss price)
  */
 async function executeBuyOrder(
   client: BinanceClient,
@@ -156,17 +93,49 @@ async function executeBuyOrder(
   const { symbol, meta } = decision;
   const { currentPrice } = meta;
 
-  // Ensure we have minimum USDT balance by selling BTC if needed
-  await ensureMinimumUsdtBalance(client);
+  // Use strategy settings from DB if available; fall back to env config
+  const strategy = await getActiveStrategyConfig();
+  const stopLossPercent = strategy ? Number(strategy.stop_loss_percent) : config.STOP_LOSS_PERCENT;
+  const takeProfitPercent = strategy
+    ? Number(strategy.take_profit_percent)
+    : config.TAKE_PROFIT_PERCENT;
+  const trailingEnabled = strategy ? strategy.trailing_stop_enabled : config.TRAILING_STOP_ENABLED;
+  const trailingActivation = strategy
+    ? Number(strategy.trailing_stop_activation_percent)
+    : config.TRAILING_STOP_ACTIVATION_PERCENT;
+  const trailingDistance = strategy
+    ? Number(strategy.trailing_stop_distance_percent)
+    : config.TRAILING_STOP_DISTANCE_PERCENT;
+  const riskPerTradePercent = strategy
+    ? Number(strategy.risk_per_trade_percent)
+    : config.RISK_PER_TRADE_PERCENT;
 
-  // Get current USDT balance
+  // Get base asset balance (USDC by default)
   const account = await client.getAccountInfo();
-  const usdtBalance = Number(account.balances.find((b) => b.asset === 'USDT')?.free || 0);
-  const riskAmountUSDT = (usdtBalance * config.RISK_PER_TRADE_PERCENT) / 100;
+  const baseBalance = Number(
+    account.balances.find((b) => b.asset === config.BASE_ASSET)?.free || 0
+  );
+
+  if (baseBalance === 0) {
+    log.warn(`No ${config.BASE_ASSET} balance available for trading`);
+    return {
+      symbol,
+      success: false,
+      reason: `No ${config.BASE_ASSET} balance`,
+    };
+  }
+
+  // Apply trading capital limit (only use X% of total balance)
+  const tradingCapital = (baseBalance * config.MAX_TRADING_CAPITAL_PERCENT) / 100;
+  const riskAmountUSDT = (tradingCapital * riskPerTradePercent) / 100;
+
+  log.info(
+    `💰 ${config.BASE_ASSET} Balance: ${baseBalance.toFixed(2)} | Trading Capital (${config.MAX_TRADING_CAPITAL_PERCENT}%): ${tradingCapital.toFixed(2)} | Risk per trade: ${riskAmountUSDT.toFixed(2)}`
+  );
 
   // Calculate stop loss and take profit prices
-  const stopLossPrice = currentPrice * (1 - config.STOP_LOSS_PERCENT / 100);
-  const takeProfitPrice = currentPrice * (1 + config.TAKE_PROFIT_PERCENT / 100);
+  const stopLossPrice = currentPrice * (1 - stopLossPercent / 100);
+  const takeProfitPrice = currentPrice * (1 + takeProfitPercent / 100);
 
   // Calculate position size based on risk
   let quantity = calculateOrderQuantity(currentPrice, stopLossPrice, riskAmountUSDT);
@@ -200,22 +169,24 @@ async function executeBuyOrder(
   }
 
   // Check if we have sufficient balance for this order
-  if (usdtBalance < orderValueUSDT) {
+  if (tradingCapital < orderValueUSDT) {
     log.warn(
-      `Insufficient balance: ${usdtBalance.toFixed(2)} USDT < ${orderValueUSDT.toFixed(2)} USDT needed for ${symbol}`
+      `Insufficient trading capital: ${tradingCapital.toFixed(2)} ${config.BASE_ASSET} < ${orderValueUSDT.toFixed(2)} needed for ${symbol}`
     );
     return {
       symbol,
       success: false,
-      reason: `Insufficient balance (have: ${usdtBalance.toFixed(2)} USDT, need: ${orderValueUSDT.toFixed(2)} USDT)`,
+      reason: `Insufficient capital (have: ${tradingCapital.toFixed(2)} ${config.BASE_ASSET}, need: ${orderValueUSDT.toFixed(2)})`,
     };
   }
-  log.info(`Attempting to buy ${quantity} ${symbol} @ ${currentPrice.toFixed(2)} USDT`);
   log.info(
-    `  Stop Loss: ${stopLossPrice.toFixed(2)} (${config.STOP_LOSS_PERCENT}%) | Take Profit: ${takeProfitPrice.toFixed(2)} (${config.TAKE_PROFIT_PERCENT}%)`
+    `Attempting to buy ${quantity} ${symbol} @ ${currentPrice.toFixed(2)} ${config.BASE_ASSET}`
   );
   log.info(
-    `  Balance: ${usdtBalance.toFixed(2)} USDT | Risk: ${riskAmountUSDT.toFixed(2)} USDT (${config.RISK_PER_TRADE_PERCENT}%) | Position: ${orderValueUSDT.toFixed(2)} USDT`
+    `  Stop Loss: ${stopLossPrice.toFixed(2)} (${stopLossPercent}%) | Take Profit: ${takeProfitPrice.toFixed(2)} (${takeProfitPercent}%)`
+  );
+  log.info(
+    `  Balance: ${baseBalance.toFixed(2)} ${config.BASE_ASSET} | Trading Capital: ${tradingCapital.toFixed(2)} | Risk: ${riskAmountUSDT.toFixed(2)} (${riskPerTradePercent}%) | Position: ${orderValueUSDT.toFixed(2)}`
   );
 
   // Validate order against risk limits
@@ -269,7 +240,7 @@ async function executeBuyOrder(
       take_profit_price: takeProfitPrice,
       initial_stop_loss_price: stopLossPrice,
       entry_order_id: response.orderId.toString(),
-      trailing_stop_enabled: config.TRAILING_STOP_ENABLED,
+      trailing_stop_enabled: trailingEnabled,
       highest_price: currentPrice,
       status: 'OPEN',
     });

@@ -42,7 +42,7 @@ function selectTopByVolume(
   const excludeSet = new Set(normalizeSymbols(exclude));
 
   return tickers
-    .filter((t) => t.symbol.endsWith('USDT'))
+    .filter((t) => t.symbol.endsWith('USDC'))
     .filter((t) => {
       const vol = Number(t.quoteVolume);
       return Number.isFinite(vol) && vol >= minQuoteVolume;

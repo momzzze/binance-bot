@@ -36,6 +36,76 @@ router.get('/status', (req, res) => {
 });
 
 /**
+ * GET /bot/account - Get account information and balances
+ */
+router.get('/account', async (req, res) => {
+  const { binanceClient } = req.app.locals;
+
+  if (!binanceClient) {
+    return res.status(503).json({ error: 'Binance client not configured' });
+  }
+
+  try {
+    const [accountInfo, openPositions] = await Promise.all([
+      binanceClient.getAccountInfo(),
+      getOpenPositions(),
+    ]);
+
+    // Get assets from open positions with their PnL
+    const activeAssets = new Map<string, { pnl: number; positions: number }>();
+    for (const pos of openPositions) {
+      // Extract base asset from symbol (e.g., BTCUSDT -> BTC)
+      const baseAsset = pos.symbol.replace(/USDT$|USDC$|BUSD$/i, '');
+      const existing = activeAssets.get(baseAsset) || { pnl: 0, positions: 0 };
+      activeAssets.set(baseAsset, {
+        pnl: existing.pnl + pos.pnl_usdt,
+        positions: existing.positions + 1,
+      });
+    }
+
+    // Key assets to always include
+    const keyAssets = ['USDT', 'USDC', 'BTC', 'ETH', 'BNB'];
+    const keyAssetsSet = new Set(keyAssets);
+
+    // Format all balances and filter appropriately
+    const balances = accountInfo.balances
+      .map((b) => {
+        const activeInfo = activeAssets.get(b.asset);
+        return {
+          asset: b.asset,
+          free: parseFloat(b.free),
+          locked: parseFloat(b.locked),
+          total: parseFloat(b.free) + parseFloat(b.locked),
+          isTrading: !!activeInfo,
+          activePositions: activeInfo?.positions || 0,
+          unrealizedPnl: activeInfo?.pnl || 0,
+          isKeyAsset: keyAssetsSet.has(b.asset),
+        };
+      })
+      .filter((b) => b.total > 0 || b.isKeyAsset || b.isTrading)
+      .sort((a, b) => {
+        // Sort priority: 1) trading assets, 2) key assets, 3) by total value
+        if (a.isTrading && !b.isTrading) return -1;
+        if (!a.isTrading && b.isTrading) return 1;
+        if (a.isKeyAsset && !b.isKeyAsset) return -1;
+        if (!a.isKeyAsset && b.isKeyAsset) return 1;
+        return b.total - a.total;
+      });
+
+    res.json({
+      balances,
+      canTrade: accountInfo.canTrade,
+      canWithdraw: accountInfo.canWithdraw,
+      canDeposit: accountInfo.canDeposit,
+      updateTime: accountInfo.updateTime,
+    });
+  } catch (error) {
+    log.error('Failed to fetch account info:', error);
+    res.status(500).json({ error: 'Failed to fetch account information' });
+  }
+});
+
+/**
  * GET /bot/positions - Get all open positions
  */
 router.get('/positions', async (req, res) => {
@@ -223,10 +293,128 @@ router.get('/stats/history', async (req, res) => {
       [days]
     );
 
-    res.json({ history: result.rows });
+    const history = result.rows.map((row: any) => ({
+      ...row,
+      total_pnl_usdc: parseFloat(row.total_pnl_usdt),
+      total_commission_usdc: parseFloat(row.total_commission_usdt),
+      net_pnl_usdc: parseFloat(row.net_pnl_usdt),
+      best_trade_usdc: parseFloat(row.best_trade_usdt),
+      worst_trade_usdc: parseFloat(row.worst_trade_usdt),
+    }));
+
+    res.json({ history });
   } catch (error) {
     log.error('Failed to fetch stats history:', error);
     res.status(500).json({ error: 'Failed to fetch stats history' });
+  }
+});
+
+/**
+ * POST /bot/stats/backfill - Backfill daily stats from historical positions
+ */
+router.post('/stats/backfill', async (req, res) => {
+  try {
+    const { query: dbQuery } = await import('../../modules/db/db.js');
+
+    // Get all unique dates where positions were closed
+    const datesResult = await dbQuery(`
+        SELECT DISTINCT DATE(closed_at) as trade_date
+        FROM positions
+        WHERE closed_at IS NOT NULL
+          AND status IN ('CLOSED', 'STOPPED_OUT', 'TAKE_PROFIT')
+        ORDER BY trade_date;
+      `);
+
+    const dates = datesResult.rows;
+    let processed = 0;
+
+    for (const row of dates) {
+      const tradeDate = row.trade_date;
+
+      // Calculate stats for this date
+      const statsResult = await dbQuery(
+        `
+          SELECT
+            COUNT(*)::int as total_trades,
+            SUM(CASE WHEN pnl_usdt > 0 THEN 1 ELSE 0 END)::int as winning_trades,
+            SUM(CASE WHEN pnl_usdt <= 0 THEN 1 ELSE 0 END)::int as losing_trades,
+            COALESCE(AVG(pnl_percent), 0) as avg_pnl_percent,
+            COALESCE(SUM(pnl_usdt), 0) as total_pnl_usdt,
+            0::numeric as total_commission_usdt,
+            COALESCE(MAX(pnl_usdt), 0) as best_trade_usdt,
+            COALESCE(MIN(pnl_usdt), 0) as worst_trade_usdt
+          FROM positions
+          WHERE DATE(closed_at) = $1
+            AND status IN ('CLOSED', 'STOPPED_OUT', 'TAKE_PROFIT');
+        `,
+        [tradeDate]
+      );
+
+      const stats = statsResult.rows[0];
+
+      if (!stats || stats.total_trades === 0) {
+        continue;
+      }
+
+      const winRate =
+        stats.total_trades > 0 ? (stats.winning_trades / stats.total_trades) * 100 : 0;
+      const netPnl = stats.total_pnl_usdt;
+
+      // Insert into daily_stats
+      await dbQuery(
+        `
+          INSERT INTO daily_stats (
+            trade_date,
+            total_trades,
+            winning_trades,
+            losing_trades,
+            win_rate,
+            total_pnl_usdt,
+            total_commission_usdt,
+            net_pnl_usdt,
+            avg_pnl_percent,
+            best_trade_usdt,
+            worst_trade_usdt
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          ON CONFLICT (trade_date) DO UPDATE SET
+            total_trades = EXCLUDED.total_trades,
+            winning_trades = EXCLUDED.winning_trades,
+            losing_trades = EXCLUDED.losing_trades,
+            win_rate = EXCLUDED.win_rate,
+            total_pnl_usdt = EXCLUDED.total_pnl_usdt,
+            total_commission_usdt = EXCLUDED.total_commission_usdt,
+            net_pnl_usdt = EXCLUDED.net_pnl_usdt,
+            avg_pnl_percent = EXCLUDED.avg_pnl_percent,
+            best_trade_usdt = EXCLUDED.best_trade_usdt,
+            worst_trade_usdt = EXCLUDED.worst_trade_usdt,
+            updated_at = NOW();
+        `,
+        [
+          tradeDate,
+          stats.total_trades,
+          stats.winning_trades,
+          stats.losing_trades,
+          winRate,
+          stats.total_pnl_usdt,
+          stats.total_commission_usdt,
+          netPnl,
+          stats.avg_pnl_percent,
+          stats.best_trade_usdt,
+          stats.worst_trade_usdt,
+        ]
+      );
+
+      processed++;
+    }
+
+    log.info(`Daily stats backfill complete: ${processed} dates processed`);
+    res.json({
+      message: 'Daily stats backfilled successfully',
+      datesProcessed: processed,
+    });
+  } catch (error) {
+    log.error('Failed to backfill stats:', error);
+    res.status(500).json({ error: 'Failed to backfill stats' });
   }
 });
 

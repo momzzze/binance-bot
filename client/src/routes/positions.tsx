@@ -15,6 +15,44 @@ function Positions() {
   const [closing, setClosing] = useState<string | null>(null);
   const [editingStopLoss, setEditingStopLoss] = useState<string | null>(null);
   const [newStopLoss, setNewStopLoss] = useState<string>('');
+  const [sortConfig, setSortConfig] = useState<{
+    key: keyof Position | null;
+    direction: 'asc' | 'desc';
+  }>({ key: null, direction: 'asc' });
+
+  const sortedPositions = () => {
+    if (!sortConfig.key) return positions;
+
+    return [...positions].sort((a, b) => {
+      const aVal = a[sortConfig.key!];
+      const bVal = b[sortConfig.key!];
+
+      if (aVal == null && bVal == null) return 0;
+      if (aVal == null) return 1;
+      if (bVal == null) return -1;
+
+      let comparison = 0;
+      if (typeof aVal === 'string' && typeof bVal === 'string') {
+        comparison = aVal.localeCompare(bVal);
+      } else if (typeof aVal === 'number' && typeof bVal === 'number') {
+        comparison = aVal - bVal;
+      }
+
+      return sortConfig.direction === 'asc' ? comparison : -comparison;
+    });
+  };
+
+  const handleSort = (key: keyof Position) => {
+    setSortConfig((prev) => ({
+      key,
+      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  };
+
+  const getSortIndicator = (key: keyof Position) => {
+    if (sortConfig.key !== key) return ' ↕';
+    return sortConfig.direction === 'asc' ? ' ▲' : ' ▼';
+  };
 
   const load = async () => {
     setLoading(true);
@@ -143,22 +181,79 @@ function Positions() {
           >
             <thead>
               <tr style={{ textAlign: 'left', color: '#9aa3c4' }}>
-                <th style={th}>Symbol</th>
-                <th style={th}>Side</th>
-                <th style={th}>Entry</th>
-                <th style={th}>Current</th>
-                <th style={th}>Stop Loss</th>
-                <th style={th}>Take Profit</th>
-                <th style={th}>Qty</th>
-                <th style={th}>PnL (USDT)</th>
-                <th style={th}>PnL %</th>
-                <th style={th}>Status</th>
+                <th
+                  style={{ ...th, cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => handleSort('symbol')}
+                >
+                  Symbol{getSortIndicator('symbol')}
+                </th>
+                <th
+                  style={{ ...th, cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => handleSort('side')}
+                >
+                  Side{getSortIndicator('side')}
+                </th>
+                <th
+                  style={{ ...th, cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => handleSort('entry_price')}
+                >
+                  Entry{getSortIndicator('entry_price')}
+                </th>
+                <th
+                  style={{ ...th, cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => handleSort('current_price')}
+                >
+                  Current{getSortIndicator('current_price')}
+                </th>
+                <th
+                  style={{ ...th, cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => handleSort('stop_loss_price')}
+                >
+                  Stop Loss{getSortIndicator('stop_loss_price')}
+                </th>
+                <th
+                  style={{ ...th, cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => handleSort('take_profit_price')}
+                >
+                  Take Profit{getSortIndicator('take_profit_price')}
+                </th>
+                <th
+                  style={{ ...th, cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => handleSort('quantity')}
+                >
+                  Qty{getSortIndicator('quantity')}
+                </th>
+                <th
+                  style={{ ...th, cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => handleSort('pnl_usdt')}
+                >
+                  PnL (USDT){getSortIndicator('pnl_usdt')}
+                </th>
+                <th
+                  style={{ ...th, cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => handleSort('pnl_percent')}
+                >
+                  PnL %{getSortIndicator('pnl_percent')}
+                </th>
+                <th
+                  style={{ ...th, cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => handleSort('status')}
+                >
+                  Status{getSortIndicator('status')}
+                </th>
                 {tab === 'open' && <th style={th}>Actions</th>}
-                {tab === 'closed' && <th style={th}>Closed At</th>}
+                {tab === 'closed' && (
+                  <th
+                    style={{ ...th, cursor: 'pointer', userSelect: 'none' }}
+                    onClick={() => handleSort('closed_at')}
+                  >
+                    Closed At{getSortIndicator('closed_at')}
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
-              {positions.map((p) => (
+              {sortedPositions().map((p) => (
                 <tr key={p.id} style={{ borderTop: '1px solid #232a4a' }}>
                   <td style={td}>{p.symbol}</td>
                   <td style={td}>{p.side}</td>

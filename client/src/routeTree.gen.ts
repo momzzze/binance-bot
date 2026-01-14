@@ -14,6 +14,7 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PositionsRouteImport } from './routes/positions'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as ChartsRouteImport } from './routes/charts'
+import { Route as CalendarRouteImport } from './routes/calendar'
 import { Route as IndexRouteImport } from './routes/index'
 
 const TradesRoute = TradesRouteImport.update({
@@ -41,6 +42,11 @@ const ChartsRoute = ChartsRouteImport.update({
   path: '/charts',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CalendarRoute = CalendarRouteImport.update({
+  id: '/calendar',
+  path: '/calendar',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -49,6 +55,7 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/calendar': typeof CalendarRoute
   '/charts': typeof ChartsRoute
   '/dashboard': typeof DashboardRoute
   '/positions': typeof PositionsRoute
@@ -57,6 +64,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/calendar': typeof CalendarRoute
   '/charts': typeof ChartsRoute
   '/dashboard': typeof DashboardRoute
   '/positions': typeof PositionsRoute
@@ -66,6 +74,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/calendar': typeof CalendarRoute
   '/charts': typeof ChartsRoute
   '/dashboard': typeof DashboardRoute
   '/positions': typeof PositionsRoute
@@ -76,16 +85,25 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/calendar'
     | '/charts'
     | '/dashboard'
     | '/positions'
     | '/settings'
     | '/trades'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/charts' | '/dashboard' | '/positions' | '/settings' | '/trades'
+  to:
+    | '/'
+    | '/calendar'
+    | '/charts'
+    | '/dashboard'
+    | '/positions'
+    | '/settings'
+    | '/trades'
   id:
     | '__root__'
     | '/'
+    | '/calendar'
     | '/charts'
     | '/dashboard'
     | '/positions'
@@ -95,6 +113,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CalendarRoute: typeof CalendarRoute
   ChartsRoute: typeof ChartsRoute
   DashboardRoute: typeof DashboardRoute
   PositionsRoute: typeof PositionsRoute
@@ -139,6 +158,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChartsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/calendar': {
+      id: '/calendar'
+      path: '/calendar'
+      fullPath: '/calendar'
+      preLoaderRoute: typeof CalendarRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -151,6 +177,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CalendarRoute: CalendarRoute,
   ChartsRoute: ChartsRoute,
   DashboardRoute: DashboardRoute,
   PositionsRoute: PositionsRoute,
