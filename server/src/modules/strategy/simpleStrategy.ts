@@ -31,7 +31,7 @@ async function getStrategyParams(): Promise<StrategyConfigRow> {
       rsi_period: 14,
       rsi_overbought: 70,
       rsi_oversold: 30,
-      buy_score_threshold: 5,
+      buy_score_threshold: 6, // Increased from 5 to be more selective
       sell_score_threshold: -5,
       stop_loss_percent: '4.0',
       take_profit_percent: '5.0',
@@ -142,6 +142,95 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
     `${symbol}: Evaluating - price=${currentPrice.toFixed(2)}, SMA${config.sma_short_period}=${smaShort?.toFixed(2)}, SMA${config.sma_long_period}=${smaLong?.toFixed(2)}, EMA${config.ema_short_period}=${emaShort?.toFixed(2)}, EMA${config.ema_long_period}=${emaLong?.toFixed(2)}, RSI=${rsi?.toFixed(1)}`
   );
 
+  // ============================
+  // TREND FILTERS - PREVENT BUYING IN DOWNTRENDS
+  // ============================
+
+  // Filter 1: Price must be above SMA50 (long-term trend filter)
+  if (smaLong !== null && currentPrice < smaLong) {
+    log.debug(
+      `  ❌ BLOCKED: Price ${currentPrice.toFixed(2)} below SMA${config.sma_long_period} ${smaLong.toFixed(2)} - DOWNTREND`
+    );
+    return {
+      symbol,
+      signal: 'HOLD',
+      score: 0,
+      meta: {
+        ...meta,
+        reason: `🚫 Bearish: Price below SMA${config.sma_long_period} (downtrend)`,
+      },
+    };
+  }
+
+  // Filter 2: Price must be above SMA20 (short-term trend filter)
+  if (smaShort !== null && currentPrice < smaShort) {
+    log.debug(
+      `  ❌ BLOCKED: Price ${currentPrice.toFixed(2)} below SMA${config.sma_short_period} ${smaShort.toFixed(2)} - WEAK TREND`
+    );
+    return {
+      symbol,
+      signal: 'HOLD',
+      score: 0,
+      meta: {
+        ...meta,
+        reason: `🚫 Weak: Price below SMA${config.sma_short_period}`,
+      },
+    };
+  }
+
+  // Filter 3: Require Golden Cross (SMA20 > SMA50)
+  if (smaShort !== null && smaLong !== null && smaShort <= smaLong) {
+    log.debug(
+      `  ❌ BLOCKED: No golden cross - SMA${config.sma_short_period} ${smaShort.toFixed(2)} <= SMA${config.sma_long_period} ${smaLong.toFixed(2)}`
+    );
+    return {
+      symbol,
+      signal: 'HOLD',
+      score: 0,
+      meta: {
+        ...meta,
+        reason: `🚫 No golden cross: SMA${config.sma_short_period} <= SMA${config.sma_long_period}`,
+      },
+    };
+  }
+
+  // Filter 4: EMA alignment check (EMA12 > EMA26)
+  if (emaShort !== null && emaLong !== null && emaShort <= emaLong) {
+    log.debug(
+      `  ❌ BLOCKED: EMA bearish - EMA${config.ema_short_period} ${emaShort.toFixed(2)} <= EMA${config.ema_long_period} ${emaLong.toFixed(2)}`
+    );
+    return {
+      symbol,
+      signal: 'HOLD',
+      score: 0,
+      meta: {
+        ...meta,
+        reason: `🚫 EMA bearish: EMA${config.ema_short_period} <= EMA${config.ema_long_period}`,
+      },
+    };
+  }
+
+  // Filter 5: Check SMA50 is rising (not declining)
+  if (candles.length >= config.sma_long_period + 10) {
+    const sma50Previous = computeSMA(candles.slice(0, -10), config.sma_long_period);
+    if (sma50Previous !== null && smaLong !== null && smaLong < sma50Previous * 0.998) {
+      log.debug(
+        `  ❌ BLOCKED: SMA${config.sma_long_period} declining - current ${smaLong.toFixed(2)} < previous ${sma50Previous.toFixed(2)}`
+      );
+      return {
+        symbol,
+        signal: 'HOLD',
+        score: 0,
+        meta: {
+          ...meta,
+          reason: `🚫 SMA${config.sma_long_period} declining (bear market)`,
+        },
+      };
+    }
+  }
+
+  log.debug(`  ✅ TREND FILTERS PASSED - Bullish structure confirmed`);
+
   // SMA trend
   if (smaShort !== null && smaLong !== null) {
     if (smaShort > smaLong) {
@@ -186,14 +275,16 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
       score -= 2;
       reasons.push(`RSI>${config.rsi_overbought} (overbought)`);
       log.debug(`  -2 RSI overbought: ${rsi.toFixed(1)} > ${config.rsi_overbought}`);
-    } else if (rsi < 50) {
+    }
+    // Removed the weak RSI<50/RSI>50 bonus - too permissive
+  }
+
+  // Additional strength check: Require price above both EMAs
+  if (emaShort !== null && emaLong !== null) {
+    if (currentPrice > emaShort && currentPrice > emaLong) {
       score += 1;
-      reasons.push('RSI<50');
-      log.debug(`  +1 RSI mild oversold: ${rsi.toFixed(1)} < 50`);
-    } else {
-      score -= 1;
-      reasons.push('RSI>50');
-      log.debug(`  -1 RSI mild overbought: ${rsi.toFixed(1)} > 50`);
+      reasons.push('Price>EMAs');
+      log.debug(`  +1 Price above both EMAs`);
     }
   }
 
