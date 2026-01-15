@@ -275,7 +275,7 @@ router.get('/stats/history', async (req, res) => {
     const result = await dbQuery(
       `
       SELECT 
-        trade_date,
+        trade_date::text,
         total_trades,
         winning_trades,
         losing_trades,
@@ -318,7 +318,7 @@ router.post('/stats/backfill', async (req, res) => {
 
     // Get all unique dates where positions were closed
     const datesResult = await dbQuery(`
-        SELECT DISTINCT DATE(closed_at) as trade_date
+        SELECT DISTINCT (closed_at AT TIME ZONE 'UTC')::date as trade_date
         FROM positions
         WHERE closed_at IS NOT NULL
           AND status IN ('CLOSED', 'STOPPED_OUT', 'TAKE_PROFIT')
@@ -344,7 +344,7 @@ router.post('/stats/backfill', async (req, res) => {
             COALESCE(MAX(pnl_usdt), 0) as best_trade_usdt,
             COALESCE(MIN(pnl_usdt), 0) as worst_trade_usdt
           FROM positions
-          WHERE DATE(closed_at) = $1
+          WHERE (closed_at AT TIME ZONE 'UTC')::date = $1
             AND status IN ('CLOSED', 'STOPPED_OUT', 'TAKE_PROFIT');
         `,
         [tradeDate]

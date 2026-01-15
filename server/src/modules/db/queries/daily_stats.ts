@@ -36,7 +36,7 @@ export async function updateDailyStats(tradeDate: Date = new Date()): Promise<vo
       COALESCE(MAX(pnl_usdt), 0) as best_trade_usdt,
       COALESCE(MIN(pnl_usdt), 0) as worst_trade_usdt
     FROM positions
-    WHERE DATE(closed_at) = $1
+    WHERE (closed_at AT TIME ZONE 'UTC')::date = $1
       AND status IN ('CLOSED', 'STOPPED_OUT', 'TAKE_PROFIT');
   `;
 

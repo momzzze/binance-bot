@@ -19,6 +19,9 @@ function Calendar() {
     setError(null);
     try {
       const res = await botService.getStatsHistory(365);
+      console.log('====================================');
+      console.log(res);
+      console.log('====================================');
       setHistoryStats(res.history || []);
     } catch (err) {
       setError(
@@ -33,10 +36,10 @@ function Calendar() {
     load();
   }, []);
 
-  // Normalize dates to YYYY-MM-DD and coerce numerics to numbers; prefer USDC aliases if provided
+  // Normalize dates and coerce numerics to numbers; prefer USDC aliases if provided
   const normalizedHistory = historyStats.map((h) => ({
     ...h,
-    trade_date: h.trade_date.split('T')[0],
+    trade_date: h.trade_date, // Already YYYY-MM-DD format from API
     total_trades: Number(h.total_trades),
     winning_trades: Number(h.winning_trades),
     losing_trades: Number(h.losing_trades),
@@ -55,6 +58,7 @@ function Calendar() {
     best_trade_usdc: Number((h as any).best_trade_usdc ?? h.best_trade_usdt),
     worst_trade_usdc: Number((h as any).worst_trade_usdc ?? h.worst_trade_usdt),
   }));
+
   const statsMap = new Map(normalizedHistory.map((h) => [h.trade_date, h]));
 
   const monthDate = new Date(
@@ -250,7 +254,7 @@ function Calendar() {
                   <span
                     style={{
                       color: dayData ? textColor : '#9aa3c4',
-                      fontSize: '1.1rem',
+                      fontSize: '0.6rem',
                       fontWeight: 700,
                     }}
                   >
@@ -261,8 +265,8 @@ function Calendar() {
                       <span
                         style={{
                           color: textColor,
-                          fontSize: '0.75rem',
-                          marginTop: '0.3rem',
+                          fontSize: '0.65rem',
+                          marginTop: '0.2rem',
                         }}
                       >
                         {pnlValue > 0 ? '+' : ''}
@@ -271,7 +275,7 @@ function Calendar() {
                       <span
                         style={{
                           color: textColor,
-                          fontSize: '0.65rem',
+                          fontSize: '0.55rem',
                           marginTop: '0.1rem',
                         }}
                       >
@@ -412,8 +416,8 @@ function StatBox({
       <p
         style={{
           color: '#9aa3c4',
-          fontSize: '0.85rem',
-          margin: '0 0 0.3rem 0',
+          fontSize: '0.7rem',
+          margin: '0 0 0.2rem 0',
         }}
       >
         {label}
@@ -421,7 +425,7 @@ function StatBox({
       <p
         style={{
           color: color || '#f3ba2f',
-          fontSize: '1.3rem',
+          fontSize: '1rem',
           fontWeight: 700,
           margin: 0,
         }}
@@ -515,7 +519,7 @@ const calendarSection: CSSProperties = {
   background: '#151a33',
   border: '1px solid #232a4a',
   borderRadius: '12px',
-  padding: '1rem',
+  padding: '0.45rem',
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
@@ -530,54 +534,52 @@ const monthHeader: CSSProperties = {
 const monthStatsBar: CSSProperties = {
   display: 'grid',
   gridTemplateColumns: 'repeat(5, 1fr)',
-  gap: '0.5rem',
-  marginBottom: '0.75rem',
+  gap: '0.4rem',
+  marginBottom: '0.7rem',
   flexShrink: 0,
 };
 
 const statBoxStyle: CSSProperties = {
   background: '#1a1f3a',
   border: '1px solid #232a4a',
-  borderRadius: '8px',
-  padding: '0.5rem',
+  borderRadius: '6px',
+  padding: '0.35rem',
   textAlign: 'center',
 };
 
 const calendarDaysHeader: CSSProperties = {
   display: 'grid',
   gridTemplateColumns: 'repeat(7, 1fr)',
-  gap: '0.4rem',
-  marginBottom: '0.5rem',
+  gap: '0.3rem',
+  marginBottom: '0.4rem',
   flexShrink: 0,
 };
 
 const calendarDayHeaderCell: CSSProperties = {
   textAlign: 'center',
   color: '#9aa3c4',
-  fontSize: '0.75rem',
+  fontSize: '0.65rem',
   fontWeight: 600,
-  padding: '0.3rem 0',
+  padding: '0.2rem 0',
 };
 
 const calendarDaysGrid: CSSProperties = {
   display: 'grid',
   gridTemplateColumns: 'repeat(7, 1fr)',
-  gap: '0.4rem',
-  flex: 1,
-  alignContent: 'start',
-  minHeight: 0,
-  maxHeight: '100%',
+  gap: '0.3rem',
+  overflowY: 'auto',
+  overflowX: 'hidden',
 };
 
 const calendarDayCell: CSSProperties = {
-  aspectRatio: '1',
+  height: '110px',
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'center',
   justifyContent: 'center',
-  padding: '0.4rem',
-  borderRadius: '8px',
-  fontSize: '0.8rem',
+  padding: '0.25rem',
+  borderRadius: '6px',
+  fontSize: '0.7rem',
   position: 'relative',
   transition: 'all 0.2s',
 };
