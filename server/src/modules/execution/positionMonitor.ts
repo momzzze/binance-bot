@@ -155,12 +155,47 @@ async function executeSellOrder(
   const { symbol, quantity } = position;
 
   try {
+    // Get current price for validation
+    const ticker = await client.get24hTicker(symbol);
+    const currentPrice = Number(ticker.lastPrice);
+
+    // Get symbol filters (minNotional, etc)
+    const exchangeInfo = await client.getExchangeInfo(symbol);
+    const symbolInfo = exchangeInfo.symbols.find((s) => s.symbol === symbol);
+
+    if (!symbolInfo) {
+      throw new Error(`Symbol ${symbol} not found in exchange info`);
+    }
+
+    const notionalFilter = symbolInfo.filters.find(
+      (f) => f.filterType === 'NOTIONAL' || f.filterType === 'MIN_NOTIONAL'
+    );
+    const minNotional = notionalFilter?.minNotional ? parseFloat(notionalFilter.minNotional) : 10;
+
+    // Check if order value meets minimum notional
+    const orderValue = quantity * currentPrice;
+    if (orderValue < minNotional) {
+      log.warn(
+        `🚫 SELL BLOCKED for ${symbol}: Order value ${orderValue.toFixed(2)} USDT < minimum ${minNotional} USDT`
+      );
+      log.warn(
+        `   Quantity: ${quantity.toFixed(8)} @ ${currentPrice.toFixed(2)} = ${orderValue.toFixed(2)} USDT`
+      );
+      log.warn(`   Reason: ${closeReason}`);
+      log.info(
+        `   Position will be kept open. Consider closing manually when order value is larger.`
+      );
+      return;
+    }
+
     const clientOrderId = `bot_exit_${Date.now()}_${symbol}`;
+    const precision = quantity.toString().split('.')[1]?.length || 0;
+
     const request = {
       symbol,
       side: 'SELL' as const,
       type: 'MARKET' as const,
-      quantity: quantity.toFixed(6),
+      quantity: quantity.toFixed(Math.max(precision, 6)),
     };
 
     const response = await client.createOrder(request);

@@ -33,24 +33,66 @@ function pickManualSymbols(config: BotConfig): string[] {
   return applyExclusions(manual, config.EXCLUDE_SYMBOLS);
 }
 
+/**
+ * Filters symbols by recent price trend (last 24h performance)
+ * Only keeps symbols that are:
+ * - UP in last 24h (positive priceChangePercent)
+ * - NOT on a 2+ day downtrend
+ */
+function filterByTrend(
+  tickers: BinanceTicker24h[],
+  minGainPercent: number = 0.1
+): BinanceTicker24h[] {
+  return tickers.filter((t) => {
+    const priceChange = Number(t.priceChangePercent);
+
+    // Only keep symbols with positive 24h trend
+    if (priceChange < minGainPercent) {
+      return false;
+    }
+
+    // High Volume moving up is a good sign
+    const volChange = Number(t.quoteVolume);
+    return Number.isFinite(volChange) && volChange > 0;
+  });
+}
+
 function selectTopByVolume(
   tickers: BinanceTicker24h[],
   minQuoteVolume: number,
   topN: number,
-  exclude: string[]
+  exclude: string[],
+  filterTrend: boolean = true
 ): string[] {
   const excludeSet = new Set(normalizeSymbols(exclude));
 
-  return tickers
+  let filtered = tickers
     .filter((t) => t.symbol.endsWith('USDC'))
     .filter((t) => {
       const vol = Number(t.quoteVolume);
       return Number.isFinite(vol) && vol >= minQuoteVolume;
     })
-    .filter((t) => !excludeSet.has(t.symbol))
+    .filter((t) => !excludeSet.has(t.symbol));
+
+  // Filter by uptrend if enabled
+  if (filterTrend) {
+    const beforeTrend = filtered.length;
+    filtered = filterByTrend(filtered, 0.1); // Minimum 0.1% gain in 24h
+
+    const filtered_out = beforeTrend - filtered.length;
+    if (filtered_out > 0) {
+      log.info(`📊 Filtered out ${filtered_out} symbols with downtrends or no gain`);
+    }
+  }
+
+  return filtered
     .sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume))
     .slice(0, topN)
-    .map((t) => t.symbol.toUpperCase());
+    .map((t) => {
+      const change = Number(t.priceChangePercent);
+      log.debug(`  ✅ ${t.symbol}: +${change.toFixed(2)}% (24h trend)`);
+      return t.symbol.toUpperCase();
+    });
 }
 
 async function computeSymbols(client: BinanceClient, config: BotConfig): Promise<SymbolCache> {
@@ -64,12 +106,15 @@ async function computeSymbols(client: BinanceClient, config: BotConfig): Promise
     };
   }
 
+  log.info('🔍 Discovering symbols with good uptrends...');
   const tickers = await client.getAll24hTickers();
+
   const autoSymbols = selectTopByVolume(
     tickers,
     config.MIN_QUOTE_VOLUME_USDT,
     config.AUTO_TOP_N,
-    config.EXCLUDE_SYMBOLS
+    config.EXCLUDE_SYMBOLS,
+    true // Enable trend filtering
   );
 
   const merged = normalizeSymbols([...manualSymbols, ...autoSymbols]);

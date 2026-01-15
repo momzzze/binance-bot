@@ -12,8 +12,10 @@ import {
   getPositionById,
   updatePositionStopLoss,
 } from '../../modules/db/queries/positions.js';
-import { insertOrder } from '../../modules/db/queries/orders.js';
+import { insertOrder, type OrderRow } from '../../modules/db/queries/orders.js';
 import { closePosition } from '../../modules/db/queries/positions.js';
+import { getRecentDecisions } from '../../modules/db/queries/decisions.js';
+import { query } from '../../modules/db/db.js';
 import {
   getActiveCooldowns,
   removeCooldown,
@@ -636,6 +638,77 @@ router.delete('/cooldowns', (req, res) => {
   } catch (error) {
     log.error('Failed to clear cooldowns:', error);
     res.status(500).json({ error: 'Failed to update stop loss' });
+  }
+});
+
+/**
+ * GET /bot/test - Simple test endpoint to verify routing works
+ */
+router.get('/test', (req, res) => {
+  res.json({ message: 'Bot routes are working!', timestamp: new Date().toISOString() });
+});
+
+/**
+ * GET /bot/review/:symbol - Review why a symbol was bought (decisions and orders)
+ */
+router.get('/review/:symbol', async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const upperSymbol = symbol.toUpperCase();
+
+    // Get recent decisions
+    const decisions = await getRecentDecisions(upperSymbol, 10);
+
+    // Get recent buy orders for this symbol
+    const ordersResult = await query<OrderRow>(
+      `SELECT * FROM orders 
+       WHERE symbol = $1 AND side = 'BUY' 
+       ORDER BY created_at DESC 
+       LIMIT 10`,
+      [upperSymbol]
+    );
+    const orders = ordersResult.rows;
+
+    // Get open position if any
+    const positionsResult = await query(
+      `SELECT * FROM positions 
+       WHERE symbol = $1 AND status = 'OPEN' 
+       LIMIT 1`,
+      [upperSymbol]
+    );
+    const position = positionsResult.rows[0] || null;
+
+    res.json({
+      symbol: upperSymbol,
+      recentDecisions: decisions.map((d) => ({
+        timestamp: d.created_at,
+        signal: d.signal,
+        score: d.score,
+        meta: d.meta,
+        reason: d.meta?.reason || 'No reason',
+      })),
+      recentOrders: orders.map((o) => ({
+        orderId: o.binance_order_id,
+        qty: o.qty,
+        timestamp: o.created_at,
+        requestJson: o.request_json,
+      })),
+      openPosition: position
+        ? {
+            entryPrice: position.entry_price,
+            quantity: position.quantity,
+            entryTime: position.created_at,
+            currentPrice: position.current_price,
+            pnl: position.pnl_usdt,
+            stopLoss: position.stop_loss_price,
+            takeProfit: position.take_profit_price,
+          }
+        : null,
+    });
+  } catch (error) {
+    log.error('Failed to review symbol:', error);
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    res.status(500).json({ error: errorMsg });
   }
 });
 

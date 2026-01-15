@@ -66,7 +66,67 @@ export interface Decision {
     ema12?: number;
     ema26?: number;
     rsi?: number;
+    trend4hGain?: number;
+    price4hAgo?: number;
+    priceNow?: number;
     reason: string;
+  };
+}
+
+/**
+ * Checks if the price has positive momentum in recent candles (last 5-10 candles)
+ * Returns the percentage gain in recent period
+ */
+function calculateRecentMomentum(candles: Candle[], periods: number = 5): number {
+  if (candles.length < periods) return 0;
+
+  const recentStart = candles[candles.length - periods];
+  const recentEnd = candles[candles.length - 1];
+
+  if (!recentStart || !recentEnd) return 0;
+
+  return ((recentEnd.close - recentStart.close) / recentStart.close) * 100;
+}
+
+/**
+ * Calculates 4-hour trend
+ * Assuming 1-minute candles, 4 hours = 240 candles
+ */
+function calculate4HourTrend(candles: Candle[]): {
+  gain: number;
+  priceNow: number;
+  price4hAgo: number;
+} {
+  const candles4h = 240; // 4 hours * 60 minutes
+
+  if (candles.length < candles4h) {
+    // Not enough data, use what we have
+    const oldestCandle = candles[0];
+    const latestCandle = candles[candles.length - 1];
+    if (!oldestCandle || !latestCandle) {
+      return { gain: 0, priceNow: 0, price4hAgo: 0 };
+    }
+    const gain = ((latestCandle.close - oldestCandle.close) / oldestCandle.close) * 100;
+    return {
+      gain,
+      priceNow: latestCandle.close,
+      price4hAgo: oldestCandle.close,
+    };
+  }
+
+  const candle4hAgo = candles[candles.length - candles4h];
+  const candleNow = candles[candles.length - 1];
+
+  if (!candle4hAgo || !candleNow) {
+    return { gain: 0, priceNow: 0, price4hAgo: 0 };
+  }
+
+  const gain = ((candleNow.close - candle4hAgo.close) / candle4hAgo.close) * 100;
+
+  return {
+    gain,
+    priceNow: candleNow.close,
+    price4hAgo: candle4hAgo.close,
   };
 }
 
@@ -78,6 +138,7 @@ export interface Decision {
  * - SMA(short) > SMA(long) (bullish trend)
  * - EMA(short) > EMA(long) (short-term momentum)
  * - RSI < overbought threshold (not overbought)
+ * - Price has positive recent momentum (not falling)
  *
  * SELL signals:
  * - SMA(short) < SMA(long) (bearish trend)
@@ -143,6 +204,12 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
   const ma99 = computeSMA(candles, 99);
   const ma200 = computeSMA(candles, 200);
 
+  // Check recent momentum (last 5-10 candles)
+  const recentMomentum = calculateRecentMomentum(candles, 5);
+
+  // Calculate 4-hour trend
+  const trend4h = calculate4HourTrend(candles);
+
   const meta = {
     currentPrice,
     sma20: smaShort ?? undefined,
@@ -150,6 +217,9 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
     ema12: emaShort ?? undefined,
     ema26: emaLong ?? undefined,
     rsi: rsi ?? undefined,
+    trend4hGain: trend4h.gain,
+    price4hAgo: trend4h.price4hAgo,
+    priceNow: trend4h.priceNow,
     reason: '',
   };
 
@@ -158,12 +228,33 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
   const reasons: string[] = [];
 
   log.debug(
-    `${symbol}: Evaluating - price=${currentPrice.toFixed(2)}, MA7=${ma7?.toFixed(2)}, MA25=${ma25?.toFixed(2)}, MA99=${ma99?.toFixed(2)}, MA200=${ma200?.toFixed(2)}, SMA${config.sma_short_period}=${smaShort?.toFixed(2)}, SMA${config.sma_long_period}=${smaLong?.toFixed(2)}, RSI=${rsi?.toFixed(1)}`
+    `${symbol}: 4H TREND: $${trend4h.price4hAgo.toFixed(2)} (4h ago) → $${trend4h.priceNow.toFixed(2)} (now) = ${trend4h.gain >= 0 ? '+' : ''}${trend4h.gain.toFixed(2)}%`
+  );
+
+  log.debug(
+    `${symbol}: Evaluating - price=${currentPrice.toFixed(2)}, 5-candle momentum=${recentMomentum.toFixed(2)}%, MA7=${ma7?.toFixed(2)}, MA25=${ma25?.toFixed(2)}, MA99=${ma99?.toFixed(2)}, MA200=${ma200?.toFixed(2)}, SMA${config.sma_short_period}=${smaShort?.toFixed(2)}, SMA${config.sma_long_period}=${smaLong?.toFixed(2)}, RSI=${rsi?.toFixed(1)}`
   );
 
   // ============================
   // TREND FILTERS - PREVENT BUYING IN DOWNTRENDS
   // Must have PROPER MA STACKING: Price > MA7 > MA25 > MA99 > MA200
+  // ============================
+
+  // Filter 0: Check recent momentum (no strong downtrend in last 5 candles)
+  if (recentMomentum < -1) {
+    log.debug(
+      `  ❌ BLOCKED: Negative recent momentum ${recentMomentum.toFixed(2)}% - price falling NOW`
+    );
+    return {
+      symbol,
+      signal: 'HOLD',
+      score: 0,
+      meta: {
+        ...meta,
+        reason: `🚫 Recent downtrend: -${Math.abs(recentMomentum).toFixed(2)}% (last 5 candles)`,
+      },
+    };
+  }
   // ============================
 
   // Filter 1: Price must be above MA200 (strongest long-term trend filter)
