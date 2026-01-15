@@ -31,7 +31,7 @@ async function getStrategyParams(): Promise<StrategyConfigRow> {
       rsi_period: 14,
       rsi_overbought: 70,
       rsi_oversold: 30,
-      buy_score_threshold: 6, // Increased from 5 to be more selective
+      buy_score_threshold: 5, // Default matches minimum score after filters 1–5
       sell_score_threshold: -5,
       stop_loss_percent: '4.0',
       take_profit_percent: '5.0',
@@ -117,12 +117,29 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
     };
   }
 
-  const currentPrice = candles[candles.length - 1].close;
+  const lastCandle = candles[candles.length - 1];
+  if (!lastCandle) {
+    return {
+      symbol,
+      signal: 'HOLD',
+      score: 0,
+      meta: {
+        currentPrice: 0,
+        reason: 'No candle data available',
+      },
+    };
+  }
+
+  const currentPrice = lastCandle.close;
   const smaShort = computeSMA(candles, config.sma_short_period);
   const smaLong = computeSMA(candles, config.sma_long_period);
   const emaShort = computeEMA(candles, config.ema_short_period);
   const emaLong = computeEMA(candles, config.ema_long_period);
   const rsi = computeRSI(candles, config.rsi_period);
+
+  // Additional faster MAs for early trend detection
+  const ma7 = computeSMA(candles, 7);
+  const ma25 = computeSMA(candles, 25);
 
   const meta = {
     currentPrice,
@@ -139,14 +156,28 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
   const reasons: string[] = [];
 
   log.debug(
-    `${symbol}: Evaluating - price=${currentPrice.toFixed(2)}, SMA${config.sma_short_period}=${smaShort?.toFixed(2)}, SMA${config.sma_long_period}=${smaLong?.toFixed(2)}, EMA${config.ema_short_period}=${emaShort?.toFixed(2)}, EMA${config.ema_long_period}=${emaLong?.toFixed(2)}, RSI=${rsi?.toFixed(1)}`
+    `${symbol}: Evaluating - price=${currentPrice.toFixed(2)}, MA7=${ma7?.toFixed(2)}, MA25=${ma25?.toFixed(2)}, SMA${config.sma_short_period}=${smaShort?.toFixed(2)}, SMA${config.sma_long_period}=${smaLong?.toFixed(2)}, EMA${config.ema_short_period}=${emaShort?.toFixed(2)}, EMA${config.ema_long_period}=${emaLong?.toFixed(2)}, RSI=${rsi?.toFixed(1)}`
   );
 
   // ============================
   // TREND FILTERS - PREVENT BUYING IN DOWNTRENDS
   // ============================
 
-  // Filter 1: Price must be above SMA50 (long-term trend filter)
+  // Filter 1: MA7 must be above MA25 (fast bullish confirmation)
+  if (ma7 !== null && ma25 !== null && ma7 <= ma25) {
+    log.debug(`  ❌ BLOCKED: MA7 ${ma7.toFixed(2)} <= MA25 ${ma25.toFixed(2)} - NOT BULLISH`);
+    return {
+      symbol,
+      signal: 'HOLD',
+      score: 0,
+      meta: {
+        ...meta,
+        reason: `🚫 MA7 <= MA25 (no short-term bullish momentum)`,
+      },
+    };
+  }
+
+  // Filter 2: Price must be above SMA50 (long-term trend filter)
   if (smaLong !== null && currentPrice < smaLong) {
     log.debug(
       `  ❌ BLOCKED: Price ${currentPrice.toFixed(2)} below SMA${config.sma_long_period} ${smaLong.toFixed(2)} - DOWNTREND`
@@ -162,7 +193,7 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
     };
   }
 
-  // Filter 2: Price must be above SMA20 (short-term trend filter)
+  // Filter 5: Price must be above SMA20 (short-term trend filter)
   if (smaShort !== null && currentPrice < smaShort) {
     log.debug(
       `  ❌ BLOCKED: Price ${currentPrice.toFixed(2)} below SMA${config.sma_short_period} ${smaShort.toFixed(2)} - WEAK TREND`
@@ -178,7 +209,7 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
     };
   }
 
-  // Filter 3: Require Golden Cross (SMA20 > SMA50)
+  // Filter 6: Require Golden Cross (SMA20 > SMA50)
   if (smaShort !== null && smaLong !== null && smaShort <= smaLong) {
     log.debug(
       `  ❌ BLOCKED: No golden cross - SMA${config.sma_short_period} ${smaShort.toFixed(2)} <= SMA${config.sma_long_period} ${smaLong.toFixed(2)}`
@@ -194,7 +225,7 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
     };
   }
 
-  // Filter 4: EMA alignment check (EMA12 > EMA26)
+  // Filter 8: EMA alignment check (EMA12 > EMA26)
   if (emaShort !== null && emaLong !== null && emaShort <= emaLong) {
     log.debug(
       `  ❌ BLOCKED: EMA bearish - EMA${config.ema_short_period} ${emaShort.toFixed(2)} <= EMA${config.ema_long_period} ${emaLong.toFixed(2)}`
@@ -210,7 +241,7 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
     };
   }
 
-  // Filter 5: Check SMA50 is rising (not declining)
+  // Filter 9: Check SMA50 is rising (not declining)
   if (candles.length >= config.sma_long_period + 10) {
     const sma50Previous = computeSMA(candles.slice(0, -10), config.sma_long_period);
     if (sma50Previous !== null && smaLong !== null && smaLong < sma50Previous * 0.998) {
