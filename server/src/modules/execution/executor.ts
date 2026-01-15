@@ -3,6 +3,7 @@ import type { BotConfig } from '../../config/env.js';
 import type { Decision } from '../strategy/simpleStrategy.js';
 import { getActiveStrategyConfig } from '../db/queries/strategy_config.js';
 import { validateOrder } from '../risk/riskEngine.js';
+import { isSymbolOnCooldown } from '../risk/symbolCooldown.js';
 import { insertOrder, updateOrderStatus } from '../db/queries/orders.js';
 import { createPosition } from '../db/queries/positions.js';
 import { createLogger } from '../../services/logger.js';
@@ -92,6 +93,16 @@ async function executeBuyOrder(
 ): Promise<ExecutionResult> {
   const { symbol, meta } = decision;
   const { currentPrice } = meta;
+
+  // Check if symbol is on cooldown (recently closed at a loss)
+  if (isSymbolOnCooldown(symbol)) {
+    log.info(`⏳ ${symbol} is on cooldown - skipping buy`);
+    return {
+      symbol,
+      success: false,
+      reason: 'Symbol on cooldown after recent close',
+    };
+  }
 
   // Use strategy settings from DB if available; fall back to env config
   const strategy = await getActiveStrategyConfig();

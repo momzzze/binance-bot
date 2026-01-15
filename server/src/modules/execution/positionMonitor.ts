@@ -9,6 +9,7 @@ import {
 } from '../db/queries/positions.js';
 import { insertOrder } from '../db/queries/orders.js';
 import { getActiveStrategyConfig } from '../db/queries/strategy_config.js';
+import { addSymbolCooldown } from '../risk/symbolCooldown.js';
 import { createLogger } from '../../services/logger.js';
 
 const log = createLogger('positionMonitor');
@@ -181,10 +182,22 @@ async function executeSellOrder(
     await closePosition(position.id, response.orderId.toString(), closeReason);
 
     const pnlUsdt = (position.current_price - position.entry_price) * position.quantity;
+    const pnlPercent =
+      ((position.current_price - position.entry_price) / position.entry_price) * 100;
+
     log.info(
       `✅ Position closed for ${symbol} (${closeReason}): ` +
-        `PnL ${pnlUsdt.toFixed(2)} USDT | Order ${response.orderId}`
+        `PnL ${pnlUsdt.toFixed(2)} USDT (${pnlPercent.toFixed(2)}%) | Order ${response.orderId}`
     );
+
+    // Add symbol to cooldown based on close reason
+    if (closeReason === 'STOPPED_OUT') {
+      // Stop loss hit - add long cooldown
+      addSymbolCooldown(symbol, 'stop_loss', pnlPercent);
+    } else if (closeReason === 'TAKE_PROFIT') {
+      // Take profit hit - add short cooldown
+      addSymbolCooldown(symbol, 'take_profit');
+    }
   } catch (error) {
     log.error(`Failed to execute sell order for ${symbol}:`, error);
     throw error;

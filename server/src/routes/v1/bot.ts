@@ -14,6 +14,12 @@ import {
 } from '../../modules/db/queries/positions.js';
 import { insertOrder } from '../../modules/db/queries/orders.js';
 import { closePosition } from '../../modules/db/queries/positions.js';
+import {
+  getActiveCooldowns,
+  removeCooldown,
+  clearAllCooldowns,
+  getCooldownInfo,
+} from '../../modules/risk/symbolCooldown.js';
 import { createLogger } from '../../services/logger.js';
 
 const log = createLogger('routes/bot');
@@ -547,6 +553,88 @@ router.patch('/positions/:id/stop-loss', async (req, res) => {
     res.json({ message: 'Stop loss updated successfully', stop_loss_price });
   } catch (error) {
     log.error(`Failed to update stop loss for position ${positionId}:`, error);
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    res.status(500).json({ error: errorMsg });
+  }
+});
+
+/**
+ * GET /bot/cooldowns - Get all symbols currently on cooldown
+ */
+router.get('/cooldowns', (req, res) => {
+  try {
+    const cooldowns = getActiveCooldowns();
+    res.json({
+      cooldowns: cooldowns.map((c) => ({
+        symbol: c.symbol,
+        reason: c.reason,
+        closedAt: new Date(c.closedAt).toISOString(),
+        lossPercent: c.lossPercent,
+      })),
+      count: cooldowns.length,
+    });
+  } catch (error) {
+    log.error('Failed to get cooldowns:', error);
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    res.status(500).json({ error: errorMsg });
+  }
+});
+
+/**
+ * GET /bot/cooldowns/:symbol - Get cooldown info for a specific symbol
+ */
+router.get('/cooldowns/:symbol', (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const info = getCooldownInfo(symbol.toUpperCase());
+
+    if (!info) {
+      return res.json({ onCooldown: false });
+    }
+
+    res.json({
+      onCooldown: true,
+      ...info,
+      closedAt: new Date(info.closedAt).toISOString(),
+    });
+  } catch (error) {
+    log.error('Failed to get cooldown info:', error);
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    res.status(500).json({ error: errorMsg });
+  }
+});
+
+/**
+ * DELETE /bot/cooldowns/:symbol - Remove a symbol from cooldown (admin override)
+ */
+router.delete('/cooldowns/:symbol', (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const removed = removeCooldown(symbol.toUpperCase());
+
+    if (removed) {
+      log.info(`🔓 ${symbol} removed from cooldown via API`);
+      res.json({ message: `${symbol} removed from cooldown`, success: true });
+    } else {
+      res.status(404).json({ message: `${symbol} was not on cooldown`, success: false });
+    }
+  } catch (error) {
+    log.error('Failed to remove cooldown:', error);
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    res.status(500).json({ error: errorMsg });
+  }
+});
+
+/**
+ * DELETE /bot/cooldowns - Clear all cooldowns (use with caution)
+ */
+router.delete('/cooldowns', (req, res) => {
+  try {
+    clearAllCooldowns();
+    log.warn('⚠️ All cooldowns cleared via API');
+    res.json({ message: 'All cooldowns cleared', success: true });
+  } catch (error) {
+    log.error('Failed to clear cooldowns:', error);
     res.status(500).json({ error: 'Failed to update stop loss' });
   }
 });
