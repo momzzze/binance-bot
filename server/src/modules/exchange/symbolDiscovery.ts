@@ -36,17 +36,17 @@ function pickManualSymbols(config: BotConfig): string[] {
 /**
  * Filters symbols by recent price trend (last 24h performance)
  * Only keeps symbols that are:
- * - UP in last 24h (positive priceChangePercent)
- * - NOT on a 2+ day downtrend
+ * - UP at least +2% in last 24h (STRONG uptrend only)
+ * - High volume
  */
 function filterByTrend(
   tickers: BinanceTicker24h[],
-  minGainPercent: number = 0.1
+  minGainPercent: number = 2.0 // DEFAULT: Minimum +2% gain in 24h
 ): BinanceTicker24h[] {
   return tickers.filter((t) => {
     const priceChange = Number(t.priceChangePercent);
 
-    // Only keep symbols with positive 24h trend
+    // Only keep symbols with STRONG positive 24h trend (at least +2%)
     if (priceChange < minGainPercent) {
       return false;
     }
@@ -77,11 +77,11 @@ function selectTopByVolume(
   // Filter by uptrend if enabled
   if (filterTrend) {
     const beforeTrend = filtered.length;
-    filtered = filterByTrend(filtered, 0.1); // Minimum 0.1% gain in 24h
+    filtered = filterByTrend(filtered, 2.0); // Minimum +2% gain in 24h (STRONG uptrend)
 
     const filtered_out = beforeTrend - filtered.length;
     if (filtered_out > 0) {
-      log.info(`📊 Filtered out ${filtered_out} symbols with downtrends or no gain`);
+      log.info(`📊 Filtered out ${filtered_out} symbols with weak/negative trends (need +2% min)`);
     }
   }
 
@@ -106,7 +106,7 @@ async function computeSymbols(client: BinanceClient, config: BotConfig): Promise
     };
   }
 
-  log.info('🔍 Discovering symbols with good uptrends...');
+  log.info('🔍 Discovering symbols with STRONG uptrends (minimum +2% in 24h)...');
   const tickers = await client.getAll24hTickers();
 
   const autoSymbols = selectTopByVolume(

@@ -31,7 +31,7 @@ async function getStrategyParams(): Promise<StrategyConfigRow> {
       rsi_period: 14,
       rsi_overbought: 70,
       rsi_oversold: 30,
-      buy_score_threshold: 5, // Default matches minimum score after filters 1–5
+      buy_score_threshold: 7, // STRICT: Need 7+ points (almost all conditions bullish)
       sell_score_threshold: -5,
       stop_loss_percent: '4.0',
       take_profit_percent: '5.0',
@@ -289,46 +289,44 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
     };
   }
 
-  // Filter 3: MA7 must be above MA99 (short-term above long-term)
-  if (ma7 !== null && ma99 !== null && ma7 <= ma99) {
-    log.debug(
-      `  ❌ BLOCKED: MA7 ${ma7.toFixed(2)} <= MA99 ${ma99.toFixed(2)} - SHORT-TERM BEARISH`
-    );
-    return {
-      symbol,
-      signal: 'HOLD',
-      score: 0,
-      meta: {
-        ...meta,
-        reason: `🚫 MA7 below MA99 (bearish structure)`,
-      },
-    };
-  }
-
-  // Filter 4: MA7 must be above MA25 (fast bullish confirmation)
+  // Filter 3: MA7 must be above MA25
   if (ma7 !== null && ma25 !== null && ma7 <= ma25) {
-    log.debug(`  ❌ BLOCKED: MA7 ${ma7.toFixed(2)} <= MA25 ${ma25.toFixed(2)} - NOT BULLISH`);
+    log.debug(`  ❌ BLOCKED: MA7 ${ma7.toFixed(2)} <= MA25 ${ma25.toFixed(2)}`);
     return {
       symbol,
       signal: 'HOLD',
       score: 0,
       meta: {
         ...meta,
-        reason: `🚫 MA7 <= MA25 (no short-term bullish momentum)`,
+        reason: `🚫 MA7 <= MA25`,
       },
     };
   }
 
-  // Filter 5: MA25 must be above MA99 (intermediate trend bullish)
+  // Filter 4: MA25 must be above MA99
   if (ma25 !== null && ma99 !== null && ma25 <= ma99) {
-    log.debug(`  ❌ BLOCKED: MA25 ${ma25.toFixed(2)} <= MA99 ${ma99.toFixed(2)} - WEAK TREND`);
+    log.debug(`  ❌ BLOCKED: MA25 ${ma25.toFixed(2)} <= MA99 ${ma99.toFixed(2)}`);
     return {
       symbol,
       signal: 'HOLD',
       score: 0,
       meta: {
         ...meta,
-        reason: `🚫 MA25 below MA99 (weak trend structure)`,
+        reason: `🚫 MA25 <= MA99`,
+      },
+    };
+  }
+
+  // Filter 5: MA7 must be above MA99
+  if (ma7 !== null && ma99 !== null && ma7 <= ma99) {
+    log.debug(`  ❌ BLOCKED: MA7 ${ma7.toFixed(2)} <= MA99 ${ma99.toFixed(2)}`);
+    return {
+      symbol,
+      signal: 'HOLD',
+      score: 0,
+      meta: {
+        ...meta,
+        reason: `🚫 MA7 <= MA99`,
       },
     };
   }
