@@ -217,3 +217,26 @@ export function computeRSI(candles: Candle[], period: number = 14): number | nul
   const rs = avgGain / avgLoss;
   return 100 - 100 / (1 + rs);
 }
+
+/**
+ * Computes Commodity Channel Index (CCI) for a given period.
+ * CCI = (TP - SMA(TP)) / (0.015 * MeanDeviation)
+ */
+export function computeCCI(candles: Candle[], period: number = 20): number | null {
+  if (candles.length < period) {
+    return null;
+  }
+
+  const recent = candles.slice(-period);
+  const typicalPrices = recent.map((c) => (c.high + c.low + c.close) / 3);
+  const smaTp = typicalPrices.reduce((acc, tp) => acc + tp, 0) / period;
+
+  const meanDeviation = typicalPrices.reduce((acc, tp) => acc + Math.abs(tp - smaTp), 0) / period;
+
+  if (meanDeviation === 0) {
+    return 0;
+  }
+
+  const latestTp = typicalPrices[typicalPrices.length - 1] ?? smaTp;
+  return (latestTp - smaTp) / (0.015 * meanDeviation);
+}

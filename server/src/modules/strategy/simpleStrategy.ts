@@ -1,5 +1,5 @@
 import type { Candle, SymbolCandles } from '../market/marketData.js';
-import { computeSMA, computeEMA, computeRSI } from '../market/marketData.js';
+import { computeSMA, computeEMA, computeRSI, computeCCI } from '../market/marketData.js';
 import { createLogger } from '../../services/logger.js';
 import { getActiveStrategyConfig, type StrategyConfigRow } from '../db/queries/strategy_config.js';
 
@@ -9,6 +9,11 @@ const log = createLogger('strategy');
 let cachedConfig: StrategyConfigRow | null = null;
 let configLastFetch = 0;
 const CONFIG_CACHE_MS = 60000; // 1 minute
+const MOMENTUM_PERIOD = 10;
+const MOMENTUM_THRESHOLD = 0.5; // percentage
+const CCI_PERIOD = 20;
+const CCI_BULLISH = 100;
+const CCI_BEARISH = -100;
 
 async function getStrategyParams(): Promise<StrategyConfigRow> {
   const now = Date.now();
@@ -31,8 +36,8 @@ async function getStrategyParams(): Promise<StrategyConfigRow> {
       rsi_period: 14,
       rsi_overbought: 70,
       rsi_oversold: 30,
-      buy_score_threshold: 7, // STRICT: Need 7+ points (almost all conditions bullish)
-      sell_score_threshold: -5,
+      buy_score_threshold: 2,
+      sell_score_threshold: -2,
       stop_loss_percent: '4.0',
       take_profit_percent: '5.0',
       trailing_stop_enabled: true,
@@ -66,6 +71,8 @@ export interface Decision {
     ema12?: number;
     ema26?: number;
     rsi?: number;
+    cci?: number;
+    momentum?: number;
     trend4hGain?: number;
     price4hAgo?: number;
     priceNow?: number;
@@ -194,18 +201,13 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
   const currentPrice = lastCandle.close;
   const smaShort = computeSMA(candles, config.sma_short_period);
   const smaLong = computeSMA(candles, config.sma_long_period);
+  const ma7 = computeSMA(candles, 7);
+  const ma90 = computeSMA(candles, 90);
   const emaShort = computeEMA(candles, config.ema_short_period);
   const emaLong = computeEMA(candles, config.ema_long_period);
   const rsi = computeRSI(candles, config.rsi_period);
-
-  // Additional faster MAs for early trend detection
-  const ma7 = computeSMA(candles, 7);
-  const ma25 = computeSMA(candles, 25);
-  const ma99 = computeSMA(candles, 99);
-  const ma200 = computeSMA(candles, 200);
-
-  // Check recent momentum (last 5-10 candles)
-  const recentMomentum = calculateRecentMomentum(candles, 5);
+  const cci = computeCCI(candles, CCI_PERIOD);
+  const recentMomentum = calculateRecentMomentum(candles, MOMENTUM_PERIOD);
 
   // Calculate 4-hour trend
   const trend4h = calculate4HourTrend(candles);
@@ -214,281 +216,68 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
     currentPrice,
     sma20: smaShort ?? undefined,
     sma50: smaLong ?? undefined,
+    ma7: ma7 ?? undefined,
+    ma90: ma90 ?? undefined,
     ema12: emaShort ?? undefined,
     ema26: emaLong ?? undefined,
     rsi: rsi ?? undefined,
+    cci: cci ?? undefined,
+    momentum: recentMomentum,
     trend4hGain: trend4h.gain,
     price4hAgo: trend4h.price4hAgo,
     priceNow: trend4h.priceNow,
     reason: '',
   };
 
-  // Calculate score based on conditions
-  let score = 0;
-  const reasons: string[] = [];
+  const checks = [
+    {
+      name: 'trend_sma',
+      pass: smaShort !== null && smaLong !== null && smaShort > smaLong,
+      reason: `SMA trend (${config.sma_short_period}>${config.sma_long_period}) must be up`,
+    },
+    {
+      name: 'price_above_short',
+      pass: smaShort !== null && currentPrice > smaShort,
+      reason: 'Price must be above short SMA',
+    },
+    {
+      name: 'ma7_gt_ma90',
+      pass: ma7 !== null && ma90 !== null && ma7 > ma90,
+      reason: 'MA7 must be above MA90',
+    },
+    {
+      name: 'momentum',
+      pass: recentMomentum > MOMENTUM_THRESHOLD,
+      reason: `Momentum must be positive > ${MOMENTUM_THRESHOLD}%`,
+    },
+    {
+      name: 'rsi_band',
+      pass: rsi !== null && rsi > config.rsi_oversold && rsi < config.rsi_overbought,
+      reason: `RSI must be between ${config.rsi_oversold} and ${config.rsi_overbought}`,
+    },
+    {
+      name: 'cci',
+      pass: cci !== null && cci > 0,
+      reason: 'CCI must be above 0',
+    },
+  ];
 
+  const failed = checks.filter((c) => !c.pass);
+  const passed = checks.length - failed.length;
+
+  if (failed.length > 0) {
+    meta.reason = `HOLD: ${failed.map((f) => f.reason).join(' | ')}`;
+    log.debug(
+      `${symbol}: HOLD (failed ${failed.length}/${checks.length}) momentum=${recentMomentum.toFixed(2)}%, rsi=${rsi?.toFixed(1)}, cci=${cci?.toFixed(1)}, price=${currentPrice.toFixed(4)}`
+    );
+    return { symbol, signal: 'HOLD', score: passed - failed.length, meta };
+  }
+
+  meta.reason = `BUY: all ${checks.length} signals passed`;
   log.debug(
-    `${symbol}: 4H TREND: $${trend4h.price4hAgo.toFixed(2)} (4h ago) → $${trend4h.priceNow.toFixed(2)} (now) = ${trend4h.gain >= 0 ? '+' : ''}${trend4h.gain.toFixed(2)}%`
+    `${symbol}: BUY with confluence momentum=${recentMomentum.toFixed(2)}%, rsi=${rsi?.toFixed(1)}, cci=${cci?.toFixed(1)}, price=${currentPrice.toFixed(4)}`
   );
-
-  log.debug(
-    `${symbol}: Evaluating - price=${currentPrice.toFixed(2)}, 5-candle momentum=${recentMomentum.toFixed(2)}%, MA7=${ma7?.toFixed(2)}, MA25=${ma25?.toFixed(2)}, MA99=${ma99?.toFixed(2)}, MA200=${ma200?.toFixed(2)}, SMA${config.sma_short_period}=${smaShort?.toFixed(2)}, SMA${config.sma_long_period}=${smaLong?.toFixed(2)}, RSI=${rsi?.toFixed(1)}`
-  );
-
-  // ============================
-  // TREND FILTERS - PREVENT BUYING IN DOWNTRENDS
-  // Must have PROPER MA STACKING: Price > MA7 > MA25 > MA99 > MA200
-  // ============================
-
-  // Filter 0: Check recent momentum (no strong downtrend in last 5 candles)
-  if (recentMomentum < -1) {
-    log.debug(
-      `  ❌ BLOCKED: Negative recent momentum ${recentMomentum.toFixed(2)}% - price falling NOW`
-    );
-    return {
-      symbol,
-      signal: 'HOLD',
-      score: 0,
-      meta: {
-        ...meta,
-        reason: `🚫 Recent downtrend: -${Math.abs(recentMomentum).toFixed(2)}% (last 5 candles)`,
-      },
-    };
-  }
-  // ============================
-
-  // Filter 1: Price must be above MA200 (strongest long-term trend filter)
-  if (ma200 !== null && currentPrice < ma200) {
-    log.debug(
-      `  ❌ BLOCKED: Price ${currentPrice.toFixed(2)} below MA200 ${ma200.toFixed(2)} - STRONG DOWNTREND`
-    );
-    return {
-      symbol,
-      signal: 'HOLD',
-      score: 0,
-      meta: {
-        ...meta,
-        reason: `🚫 BEAR MARKET: Price below MA200 (strong downtrend)`,
-      },
-    };
-  }
-
-  // Filter 2: Price must be above MA99 (long-term trend confirmation)
-  if (ma99 !== null && currentPrice < ma99) {
-    log.debug(
-      `  ❌ BLOCKED: Price ${currentPrice.toFixed(2)} below MA99 ${ma99.toFixed(2)} - DOWNTREND`
-    );
-    return {
-      symbol,
-      signal: 'HOLD',
-      score: 0,
-      meta: {
-        ...meta,
-        reason: `🚫 Bearish: Price below MA99 (downtrend)`,
-      },
-    };
-  }
-
-  // Filter 3: MA7 must be above MA25
-  if (ma7 !== null && ma25 !== null && ma7 <= ma25) {
-    log.debug(`  ❌ BLOCKED: MA7 ${ma7.toFixed(2)} <= MA25 ${ma25.toFixed(2)}`);
-    return {
-      symbol,
-      signal: 'HOLD',
-      score: 0,
-      meta: {
-        ...meta,
-        reason: `🚫 MA7 <= MA25`,
-      },
-    };
-  }
-
-  // Filter 4: MA25 must be above MA99
-  if (ma25 !== null && ma99 !== null && ma25 <= ma99) {
-    log.debug(`  ❌ BLOCKED: MA25 ${ma25.toFixed(2)} <= MA99 ${ma99.toFixed(2)}`);
-    return {
-      symbol,
-      signal: 'HOLD',
-      score: 0,
-      meta: {
-        ...meta,
-        reason: `🚫 MA25 <= MA99`,
-      },
-    };
-  }
-
-  // Filter 5: MA7 must be above MA99
-  if (ma7 !== null && ma99 !== null && ma7 <= ma99) {
-    log.debug(`  ❌ BLOCKED: MA7 ${ma7.toFixed(2)} <= MA99 ${ma99.toFixed(2)}`);
-    return {
-      symbol,
-      signal: 'HOLD',
-      score: 0,
-      meta: {
-        ...meta,
-        reason: `🚫 MA7 <= MA99`,
-      },
-    };
-  }
-
-  // Filter 6: Price must be above SMA50 (long-term trend filter)
-  if (smaLong !== null && currentPrice < smaLong) {
-    log.debug(
-      `  ❌ BLOCKED: Price ${currentPrice.toFixed(2)} below SMA${config.sma_long_period} ${smaLong.toFixed(2)} - DOWNTREND`
-    );
-    return {
-      symbol,
-      signal: 'HOLD',
-      score: 0,
-      meta: {
-        ...meta,
-        reason: `🚫 Bearish: Price below SMA${config.sma_long_period} (downtrend)`,
-      },
-    };
-  }
-
-  // Filter 7: Price must be above SMA20 (short-term trend filter)
-  if (smaShort !== null && currentPrice < smaShort) {
-    log.debug(
-      `  ❌ BLOCKED: Price ${currentPrice.toFixed(2)} below SMA${config.sma_short_period} ${smaShort.toFixed(2)} - WEAK TREND`
-    );
-    return {
-      symbol,
-      signal: 'HOLD',
-      score: 0,
-      meta: {
-        ...meta,
-        reason: `🚫 Weak: Price below SMA${config.sma_short_period}`,
-      },
-    };
-  }
-
-  // Filter 8: Require Golden Cross (SMA20 > SMA50)
-  if (smaShort !== null && smaLong !== null && smaShort <= smaLong) {
-    log.debug(
-      `  ❌ BLOCKED: No golden cross - SMA${config.sma_short_period} ${smaShort.toFixed(2)} <= SMA${config.sma_long_period} ${smaLong.toFixed(2)}`
-    );
-    return {
-      symbol,
-      signal: 'HOLD',
-      score: 0,
-      meta: {
-        ...meta,
-        reason: `🚫 No golden cross: SMA${config.sma_short_period} <= SMA${config.sma_long_period}`,
-      },
-    };
-  }
-
-  // Filter 9: EMA alignment check (EMA12 > EMA26)
-  if (emaShort !== null && emaLong !== null && emaShort <= emaLong) {
-    log.debug(
-      `  ❌ BLOCKED: EMA bearish - EMA${config.ema_short_period} ${emaShort.toFixed(2)} <= EMA${config.ema_long_period} ${emaLong.toFixed(2)}`
-    );
-    return {
-      symbol,
-      signal: 'HOLD',
-      score: 0,
-      meta: {
-        ...meta,
-        reason: `🚫 EMA bearish: EMA${config.ema_short_period} <= EMA${config.ema_long_period}`,
-      },
-    };
-  }
-
-  // Filter 10: Check SMA50 is rising (not declining)
-  if (candles.length >= config.sma_long_period + 10) {
-    const sma50Previous = computeSMA(candles.slice(0, -10), config.sma_long_period);
-    if (sma50Previous !== null && smaLong !== null && smaLong < sma50Previous * 0.998) {
-      log.debug(
-        `  ❌ BLOCKED: SMA${config.sma_long_period} declining - current ${smaLong.toFixed(2)} < previous ${sma50Previous.toFixed(2)}`
-      );
-      return {
-        symbol,
-        signal: 'HOLD',
-        score: 0,
-        meta: {
-          ...meta,
-          reason: `🚫 SMA${config.sma_long_period} declining (bear market)`,
-        },
-      };
-    }
-  }
-
-  log.debug(`  ✅ TREND FILTERS PASSED - Bullish structure confirmed`);
-
-  // SMA trend
-  if (smaShort !== null && smaLong !== null) {
-    if (smaShort > smaLong) {
-      score += 3;
-      reasons.push(`SMA${config.sma_short_period}>SMA${config.sma_long_period}`);
-      log.debug(
-        `  +3 SMA trend: ${config.sma_short_period}(${smaShort.toFixed(2)}) > ${config.sma_long_period}(${smaLong.toFixed(2)})`
-      );
-    } else if (smaShort < smaLong) {
-      score -= 3;
-      reasons.push(`SMA${config.sma_short_period}<SMA${config.sma_long_period}`);
-      log.debug(
-        `  -3 SMA trend: ${config.sma_short_period}(${smaShort.toFixed(2)}) < ${config.sma_long_period}(${smaLong.toFixed(2)})`
-      );
-    }
-  }
-
-  // EMA momentum
-  if (emaShort !== null && emaLong !== null) {
-    if (emaShort > emaLong) {
-      score += 2;
-      reasons.push(`EMA${config.ema_short_period}>EMA${config.ema_long_period}`);
-      log.debug(
-        `  +2 EMA momentum: ${config.ema_short_period}(${emaShort.toFixed(2)}) > ${config.ema_long_period}(${emaLong.toFixed(2)})`
-      );
-    } else if (emaShort < emaLong) {
-      score -= 2;
-      reasons.push(`EMA${config.ema_short_period}<EMA${config.ema_long_period}`);
-      log.debug(
-        `  -2 EMA momentum: ${config.ema_short_period}(${emaShort.toFixed(2)}) < ${config.ema_long_period}(${emaLong.toFixed(2)})`
-      );
-    }
-  }
-
-  // RSI conditions
-  if (rsi !== null) {
-    if (rsi < config.rsi_oversold) {
-      score += 2;
-      reasons.push(`RSI<${config.rsi_oversold} (oversold)`);
-      log.debug(`  +2 RSI oversold: ${rsi.toFixed(1)} < ${config.rsi_oversold}`);
-    } else if (rsi > config.rsi_overbought) {
-      score -= 2;
-      reasons.push(`RSI>${config.rsi_overbought} (overbought)`);
-      log.debug(`  -2 RSI overbought: ${rsi.toFixed(1)} > ${config.rsi_overbought}`);
-    }
-    // Removed the weak RSI<50/RSI>50 bonus - too permissive
-  }
-
-  // Additional strength check: Require price above both EMAs
-  if (emaShort !== null && emaLong !== null) {
-    if (currentPrice > emaShort && currentPrice > emaLong) {
-      score += 1;
-      reasons.push('Price>EMAs');
-      log.debug(`  +1 Price above both EMAs`);
-    }
-  }
-
-  meta.reason = reasons.join(', ') || 'No clear signal';
-
-  // Determine signal based on score thresholds from config
-  let signal: Signal = 'HOLD';
-  if (score >= config.buy_score_threshold) {
-    signal = 'BUY';
-  } else if (score <= config.sell_score_threshold) {
-    signal = 'SELL';
-  }
-
-  // Log actionable signals (BUY/SELL)
-  if (signal !== 'HOLD') {
-    log.debug(`${symbol}: signal=${signal}, score=${score}, price=${currentPrice.toFixed(2)}`);
-  }
-
-  return { symbol, signal, score, meta };
+  return { symbol, signal: 'BUY', score: passed, meta };
 }
 
 /**
