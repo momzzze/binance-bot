@@ -11,6 +11,10 @@ import { sleep } from '../../utils/sleep.js';
 
 const log = createLogger('executor');
 
+// Buffer so positions stay above exchange minNotional after a drawdown
+// e.g. 1.2 = 20% cushion; prevents getting stuck below minNotional on exit
+const MIN_NOTIONAL_BUFFER = 1.2;
+
 // Cache for symbol filters
 const symbolFiltersCache = new Map<
   string,
@@ -167,15 +171,17 @@ async function executeBuyOrder(
 
   // Ensure minimum notional value
   let orderValueUSDT = quantity * currentPrice;
-  if (orderValueUSDT < filters.minNotional) {
+  const minNotionalWithBuffer = filters.minNotional * MIN_NOTIONAL_BUFFER;
+  if (orderValueUSDT < minNotionalWithBuffer) {
     log.warn(
-      `Order value ${orderValueUSDT.toFixed(2)} USDT is below minimum notional ${filters.minNotional} for ${symbol}`
+      `Order value ${orderValueUSDT.toFixed(2)} USDT is below minNotional buffer ${minNotionalWithBuffer.toFixed(2)} (exchange min ${filters.minNotional}) for ${symbol}`
     );
-    // Increase quantity to meet minimum notional
-    quantity = Math.ceil(filters.minNotional / currentPrice / filters.stepSize) * filters.stepSize;
+    // Increase quantity to meet buffered minimum notional so we can later exit even after a drawdown
+    quantity =
+      Math.ceil(minNotionalWithBuffer / currentPrice / filters.stepSize) * filters.stepSize;
     orderValueUSDT = quantity * currentPrice;
     log.info(
-      `Adjusted quantity to ${quantity} to meet minimum notional (new value: ${orderValueUSDT.toFixed(2)} USDT)`
+      `Adjusted quantity to ${quantity} to meet buffered minimum notional (new value: ${orderValueUSDT.toFixed(2)} USDT)`
     );
   }
 
