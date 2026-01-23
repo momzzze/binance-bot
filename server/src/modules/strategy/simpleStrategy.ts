@@ -202,7 +202,7 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
   const smaShort = computeSMA(candles, config.sma_short_period);
   const smaLong = computeSMA(candles, config.sma_long_period);
   const ma7 = computeSMA(candles, 7);
-  const ma90 = computeSMA(candles, 90);
+  const ma99 = computeSMA(candles, 99);
   const emaShort = computeEMA(candles, config.ema_short_period);
   const emaLong = computeEMA(candles, config.ema_long_period);
   const rsi = computeRSI(candles, config.rsi_period);
@@ -217,7 +217,7 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
     sma20: smaShort ?? undefined,
     sma50: smaLong ?? undefined,
     ma7: ma7 ?? undefined,
-    ma90: ma90 ?? undefined,
+    ma99: ma99 ?? undefined,
     ema12: emaShort ?? undefined,
     ema26: emaLong ?? undefined,
     rsi: rsi ?? undefined,
@@ -241,9 +241,9 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
       reason: 'Price must be above short SMA',
     },
     {
-      name: 'ma7_gt_ma90',
-      pass: ma7 !== null && ma90 !== null && ma7 > ma90,
-      reason: 'MA7 must be above MA90',
+      name: 'ma7_gt_ma99',
+      pass: ma7 !== null && ma99 !== null && ma7 > ma99,
+      reason: 'MA7 must be above MA99',
     },
     {
       name: 'momentum',

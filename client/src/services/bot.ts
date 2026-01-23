@@ -76,6 +76,18 @@ export type AccountInfo = {
   updateTime: number;
 };
 
+export type PositionNotional = {
+  symbol: string;
+  notional: number;
+  quantity: number;
+  current_price: number;
+};
+
+export type PositionNotionalResponse = {
+  totalNotional: number;
+  positions: PositionNotional[];
+};
+
 export const botService = {
   getStatus: () => api<BotStatus>('/bot/status'),
   getAccount: () => api<AccountInfo>('/bot/account'),
@@ -110,6 +122,8 @@ export const botService = {
       `/bot/positions/closed${query ? `?${query}` : ''}`
     );
   },
+  getPositionsNotional: () =>
+    api<PositionNotionalResponse>('/bot/positions/notional'),
   getDailyStats: () => api<{ today: DailyStats }>('/bot/stats/daily'),
   getStatsHistory: (days: number = 90) =>
     api<{ history: DailyHistory[] }>(`/bot/stats/history?days=${days}`),

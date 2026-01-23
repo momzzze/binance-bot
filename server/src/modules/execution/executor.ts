@@ -5,7 +5,7 @@ import { getActiveStrategyConfig } from '../db/queries/strategy_config.js';
 import { validateOrder } from '../risk/riskEngine.js';
 import { isSymbolOnCooldown } from '../risk/symbolCooldown.js';
 import { insertOrder, updateOrderStatus } from '../db/queries/orders.js';
-import { createPosition } from '../db/queries/positions.js';
+import { createPosition, getOpenPositions } from '../db/queries/positions.js';
 import { createLogger } from '../../services/logger.js';
 import { sleep } from '../../utils/sleep.js';
 
@@ -144,8 +144,13 @@ async function executeBuyOrder(
   const tradingCapital = (baseBalance * config.MAX_TRADING_CAPITAL_PERCENT) / 100;
   const riskAmountUSDT = (tradingCapital * riskPerTradePercent) / 100;
 
+  // Compute active exposure to enforce remaining-capital guard
+  const openPositions = await getOpenPositions();
+  const usedCapital = openPositions.reduce((acc, p) => acc + p.current_price * p.quantity, 0);
+  const remainingCapital = Math.max(0, tradingCapital - usedCapital);
+
   log.info(
-    `💰 ${config.BASE_ASSET} Balance: ${baseBalance.toFixed(2)} | Trading Capital (${config.MAX_TRADING_CAPITAL_PERCENT}%): ${tradingCapital.toFixed(2)} | Risk per trade: ${riskAmountUSDT.toFixed(2)}`
+    `💰 ${config.BASE_ASSET} Balance: ${baseBalance.toFixed(2)} | Trading Capital (${config.MAX_TRADING_CAPITAL_PERCENT}%): ${tradingCapital.toFixed(2)} | Used: ${usedCapital.toFixed(2)} | Remaining: ${remainingCapital.toFixed(2)} | Risk per trade: ${riskAmountUSDT.toFixed(2)}`
   );
 
   // Calculate stop loss and take profit prices
@@ -183,6 +188,53 @@ async function executeBuyOrder(
     log.info(
       `Adjusted quantity to ${quantity} to meet buffered minimum notional (new value: ${orderValueUSDT.toFixed(2)} USDT)`
     );
+  }
+
+  // Cap position notional to a fraction of trading capital (per-trade budget)
+  const maxPositionNotional = Math.min(
+    tradingCapital * (config.MAX_POSITION_CAPITAL_PERCENT / 100),
+    remainingCapital
+  );
+  if (orderValueUSDT > maxPositionNotional) {
+    const cappedQty = roundToStepSize(maxPositionNotional / currentPrice, filters.stepSize);
+    if (cappedQty < filters.minQty) {
+      log.warn(
+        `Capped quantity ${cappedQty} would fall below minQty ${filters.minQty} for ${symbol} (max position ${maxPositionNotional.toFixed(2)} USDT)`
+      );
+      return {
+        symbol,
+        success: false,
+        reason: `Position cap ${maxPositionNotional.toFixed(2)} USDT too small for exchange minQty`,
+      };
+    }
+    const cappedNotional = cappedQty * currentPrice;
+    if (cappedNotional < minNotionalWithBuffer) {
+      log.warn(
+        `Capped notional ${cappedNotional.toFixed(2)} USDT is below buffered minNotional ${minNotionalWithBuffer.toFixed(2)} for ${symbol}`
+      );
+      return {
+        symbol,
+        success: false,
+        reason: 'Capped notional below exchange minimum after buffer',
+      };
+    }
+    quantity = cappedQty;
+    orderValueUSDT = cappedNotional;
+    log.info(
+      `Capped position size to ${orderValueUSDT.toFixed(2)} USDT (${config.MAX_POSITION_CAPITAL_PERCENT}% of trading capital), qty=${quantity}`
+    );
+  }
+
+  // Final guard: do not exceed remaining trading capital
+  if (orderValueUSDT > remainingCapital) {
+    log.warn(
+      `Order value ${orderValueUSDT.toFixed(2)} exceeds remaining trading capital ${remainingCapital.toFixed(2)} ${config.BASE_ASSET}`
+    );
+    return {
+      symbol,
+      success: false,
+      reason: `Insufficient remaining capital (${remainingCapital.toFixed(2)} available)`,
+    };
   }
 
   // Check if we have sufficient balance for this order

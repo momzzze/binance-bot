@@ -11,6 +11,7 @@ export type BotConfig = {
   MAX_ORDER_USDT: number;
   MAX_OPEN_ORDERS_PER_SYMBOL: number;
   MAX_TRADING_CAPITAL_PERCENT: number; // Max % of base asset to use for trading (e.g., 80 = 80%)
+  MAX_POSITION_CAPITAL_PERCENT: number; // Max % of trading capital to allocate per single position (e.g., 30 = 30%)
   LOOP_MS: number;
   STRATEGY: 'simple' | 'marketcap'; // Strategy selection
   RISK_PER_TRADE_PERCENT: number; // Risk per trade as % of balance (e.g., 1 = 1%)
@@ -74,6 +75,7 @@ export function loadEnv(): BotConfig {
     MAX_ORDER_USDT: toNum(process.env.MAX_ORDER_USDT, 20),
     MAX_OPEN_ORDERS_PER_SYMBOL: toNum(process.env.MAX_OPEN_ORDERS_PER_SYMBOL, 1),
     MAX_TRADING_CAPITAL_PERCENT: toNum(process.env.MAX_TRADING_CAPITAL_PERCENT, 80),
+    MAX_POSITION_CAPITAL_PERCENT: toNum(process.env.MAX_POSITION_CAPITAL_PERCENT, 30),
     LOOP_MS: toNum(process.env.LOOP_MS, 5000),
     STRATEGY: (process.env.STRATEGY ?? 'simple') as 'simple' | 'marketcap',
     RISK_PER_TRADE_PERCENT: toNum(process.env.RISK_PER_TRADE_PERCENT, 1),

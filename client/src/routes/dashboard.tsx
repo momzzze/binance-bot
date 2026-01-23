@@ -7,6 +7,7 @@ import {
   type DailyStats,
   type AccountInfo,
   type Balance,
+  type PositionNotionalResponse,
   DailyHistory,
 } from '../services/bot';
 import { tradesService, type TradeStats } from '../services/trades';
@@ -21,6 +22,8 @@ function Dashboard() {
   const [stats, setStats] = useState<TradeStats | null>(null);
   const [dailyStats, setDailyStats] = useState<DailyStats | null>(null);
   const [account, setAccount] = useState<AccountInfo | null>(null);
+  const [positionsNotional, setPositionsNotional] =
+    useState<PositionNotionalResponse | null>(null);
   const [summaryTime, setSummaryTime] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,16 +32,19 @@ function Dashboard() {
     setLoading(true);
     setError(null);
     try {
-      const [botRes, summaryRes, dailyRes, accountRes] = await Promise.all([
-        botService.getStatus(),
-        tradesService.getSummary(),
-        botService.getDailyStats(),
-        botService.getAccount(),
-      ]);
+      const [botRes, summaryRes, dailyRes, accountRes, notionalRes] =
+        await Promise.all([
+          botService.getStatus(),
+          tradesService.getSummary(),
+          botService.getDailyStats(),
+          botService.getAccount(),
+          botService.getPositionsNotional(),
+        ]);
       setBot(botRes);
       setStats(summaryRes.overall);
       setDailyStats(dailyRes.today);
       setAccount(accountRes);
+      setPositionsNotional(notionalRes);
       setSummaryTime(summaryRes.timestamp);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load dashboard');
@@ -117,6 +123,33 @@ function Dashboard() {
             color="#ff7070"
           />
         </div>
+      </section>
+
+      <section style={section}>
+        <h2>Open Positions</h2>
+        {positionsNotional ? (
+          <div style={grid(180)}>
+            <Card
+              label="Total Exposure"
+              value={`${positionsNotional.totalNotional.toFixed(2)} USDC`}
+              color="#7ec8ff"
+            />
+            {positionsNotional.positions.length > 0 ? (
+              positionsNotional.positions.map((pos) => (
+                <Card
+                  key={pos.symbol}
+                  label={pos.symbol}
+                  value={`${pos.notional.toFixed(2)} USDC`}
+                  color="#a8e6cf"
+                />
+              ))
+            ) : (
+              <Card label="Positions" value="None open" />
+            )}
+          </div>
+        ) : (
+          <p style={{ color: '#9aa3c4' }}>Loading...</p>
+        )}
       </section>
 
       <section style={section}>

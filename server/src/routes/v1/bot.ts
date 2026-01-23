@@ -127,6 +127,26 @@ router.get('/positions', async (req, res) => {
 });
 
 /**
+ * GET /bot/positions/notional - Aggregate open position notionals
+ */
+router.get('/positions/notional', async (req, res) => {
+  try {
+    const positions = await getOpenPositions();
+    const bySymbol = positions.map((p) => ({
+      symbol: p.symbol,
+      notional: p.current_price * p.quantity,
+      quantity: p.quantity,
+      current_price: p.current_price,
+    }));
+    const totalNotional = bySymbol.reduce((acc, p) => acc + p.notional, 0);
+    res.json({ totalNotional, positions: bySymbol });
+  } catch (error) {
+    log.error('Failed to aggregate position notional:', error);
+    res.status(500).json({ error: 'Failed to aggregate position notional' });
+  }
+});
+
+/**
  * GET /bot/positions/closed - Get closed positions
  */
 router.get('/positions/closed', async (req, res) => {

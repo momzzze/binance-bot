@@ -14,6 +14,47 @@ import { createLogger } from '../../services/logger.js';
 
 const log = createLogger('positionMonitor');
 
+// Cache for exchange filters to enforce precision/minNotional on exits
+const symbolFiltersCache = new Map<
+  string,
+  { minQty: number; stepSize: number; minNotional: number }
+>();
+
+async function getSymbolFilters(client: BinanceClient, symbol: string) {
+  if (symbolFiltersCache.has(symbol)) {
+    return symbolFiltersCache.get(symbol)!;
+  }
+
+  const exchangeInfo = await client.getExchangeInfo(symbol);
+  const symbolInfo = exchangeInfo.symbols.find((s) => s.symbol === symbol);
+  if (!symbolInfo) {
+    throw new Error(`Symbol ${symbol} not found in exchange info`);
+  }
+
+  const lotSizeFilter = symbolInfo.filters.find((f) => f.filterType === 'LOT_SIZE');
+  const notionalFilter = symbolInfo.filters.find(
+    (f) => f.filterType === 'NOTIONAL' || f.filterType === 'MIN_NOTIONAL'
+  );
+
+  if (!lotSizeFilter || !lotSizeFilter.minQty || !lotSizeFilter.stepSize) {
+    throw new Error(`LOT_SIZE filter not found for ${symbol}`);
+  }
+
+  const filters = {
+    minQty: parseFloat(lotSizeFilter.minQty),
+    stepSize: parseFloat(lotSizeFilter.stepSize),
+    minNotional: notionalFilter?.minNotional ? parseFloat(notionalFilter.minNotional) : 10,
+  };
+
+  symbolFiltersCache.set(symbol, filters);
+  return filters;
+}
+
+function roundToStepSize(quantity: number, stepSize: number): number {
+  const steps = Math.floor(quantity / stepSize);
+  return steps * stepSize;
+}
+
 /**
  * Checks all open positions and executes stop loss or take profit if triggered
  */
@@ -152,31 +193,32 @@ async function executeSellOrder(
   position: PositionRow,
   closeReason: 'CLOSED' | 'STOPPED_OUT' | 'TAKE_PROFIT'
 ): Promise<void> {
-  const { symbol, quantity } = position;
+  const { symbol } = position;
 
   try {
     // Get current price for validation
     const ticker = await client.get24hTicker(symbol);
     const currentPrice = Number(ticker.lastPrice);
 
-    // Get symbol filters (minNotional, etc)
-    const exchangeInfo = await client.getExchangeInfo(symbol);
-    const symbolInfo = exchangeInfo.symbols.find((s) => s.symbol === symbol);
+    // Get symbol filters (lot size, minNotional)
+    const filters = await getSymbolFilters(client, symbol);
 
-    if (!symbolInfo) {
-      throw new Error(`Symbol ${symbol} not found in exchange info`);
+    // Round quantity down to allowed step size
+    let quantity = roundToStepSize(position.quantity, filters.stepSize);
+    const precision = filters.stepSize.toString().split('.')[1]?.length || 0;
+
+    if (quantity < filters.minQty) {
+      log.warn(
+        `🚫 SELL BLOCKED for ${symbol}: Rounded quantity ${quantity} below minQty ${filters.minQty}`
+      );
+      return;
     }
-
-    const notionalFilter = symbolInfo.filters.find(
-      (f) => f.filterType === 'NOTIONAL' || f.filterType === 'MIN_NOTIONAL'
-    );
-    const minNotional = notionalFilter?.minNotional ? parseFloat(notionalFilter.minNotional) : 10;
 
     // Check if order value meets minimum notional
     const orderValue = quantity * currentPrice;
-    if (orderValue < minNotional) {
+    if (orderValue < filters.minNotional) {
       log.warn(
-        `🚫 SELL BLOCKED for ${symbol}: Order value ${orderValue.toFixed(2)} USDT < minimum ${minNotional} USDT`
+        `🚫 SELL BLOCKED for ${symbol}: Order value ${orderValue.toFixed(2)} USDT < minimum ${filters.minNotional} USDT`
       );
       log.warn(
         `   Quantity: ${quantity.toFixed(8)} @ ${currentPrice.toFixed(2)} = ${orderValue.toFixed(2)} USDT`
@@ -189,13 +231,11 @@ async function executeSellOrder(
     }
 
     const clientOrderId = `bot_exit_${Date.now()}_${symbol}`;
-    const precision = quantity.toString().split('.')[1]?.length || 0;
-
     const request = {
       symbol,
       side: 'SELL' as const,
       type: 'MARKET' as const,
-      quantity: quantity.toFixed(Math.max(precision, 6)),
+      quantity: quantity.toFixed(precision),
     };
 
     const response = await client.createOrder(request);
