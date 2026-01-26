@@ -209,6 +209,11 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
   const cci = computeCCI(candles, CCI_PERIOD);
   const recentMomentum = calculateRecentMomentum(candles, MOMENTUM_PERIOD);
 
+  // SANITY CHECK: Log computed values immediately
+  log.debug(
+    `${symbol}: computed MA7=${ma7?.toFixed(4)}, MA99=${ma99?.toFixed(4)}, MA7>MA99=${ma7 !== null && ma99 !== null ? ma7 > ma99 : 'null'}`
+  );
+
   // Calculate 4-hour trend
   const trend4h = calculate4HourTrend(candles);
 
@@ -265,17 +270,22 @@ export async function computeSignal(symbolCandles: SymbolCandles): Promise<Decis
   const failed = checks.filter((c) => !c.pass);
   const passed = checks.length - failed.length;
 
+  // Detailed debug log showing all checks with values
+  log.debug(
+    `${symbol}: trend_sma=${smaShort?.toFixed(4)} > ${smaLong?.toFixed(4)} ? ${checks[0].pass} | price_above_short=${currentPrice.toFixed(4)} > ${smaShort?.toFixed(4)} ? ${checks[1].pass} | ma7_gt_ma99=${ma7?.toFixed(4)} > ${ma99?.toFixed(4)} ? ${checks[2].pass} | momentum=${recentMomentum.toFixed(2)}% > ${MOMENTUM_THRESHOLD}% ? ${checks[3].pass} | rsi=${rsi?.toFixed(1)} in (${config.rsi_oversold}, ${config.rsi_overbought}) ? ${checks[4].pass} | cci=${cci?.toFixed(1)} > 0 ? ${checks[5].pass}`
+  );
+
   if (failed.length > 0) {
     meta.reason = `HOLD: ${failed.map((f) => f.reason).join(' | ')}`;
-    log.debug(
-      `${symbol}: HOLD (failed ${failed.length}/${checks.length}) momentum=${recentMomentum.toFixed(2)}%, rsi=${rsi?.toFixed(1)}, cci=${cci?.toFixed(1)}, price=${currentPrice.toFixed(4)}`
+    log.info(
+      `${symbol}: ❌ HOLD (${failed.length} failed) - ${failed.map((f) => f.name).join(', ')}`
     );
     return { symbol, signal: 'HOLD', score: passed - failed.length, meta };
   }
 
   meta.reason = `BUY: all ${checks.length} signals passed`;
-  log.debug(
-    `${symbol}: BUY with confluence momentum=${recentMomentum.toFixed(2)}%, rsi=${rsi?.toFixed(1)}, cci=${cci?.toFixed(1)}, price=${currentPrice.toFixed(4)}`
+  log.info(
+    `${symbol}: ✅ BUY (all checks passed) MA7=${ma7?.toFixed(4)}, MA99=${ma99?.toFixed(4)}, momentum=${recentMomentum.toFixed(2)}%, rsi=${rsi?.toFixed(1)}, cci=${cci?.toFixed(1)}`
   );
   return { symbol, signal: 'BUY', score: passed, meta };
 }

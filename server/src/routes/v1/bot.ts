@@ -487,6 +487,7 @@ router.post('/stop', (req, res) => {
 
 /**
  * POST /bot/positions/:id/close - Manually close a position
+ * Automatically falls back to force-close if order is below minNotional
  */
 router.post('/positions/:id/close', async (req, res) => {
   const { binanceClient } = req.app.locals;
@@ -507,6 +508,15 @@ router.post('/positions/:id/close', async (req, res) => {
       return res.status(400).json({ error: 'Position is not open' });
     }
 
+    // Get current price to check if order will meet minNotional
+    const ticker = await binanceClient.get24hTicker(position.symbol);
+    const currentPrice = Number(ticker.lastPrice);
+    const orderValue = position.quantity * currentPrice;
+
+    log.info(
+      `📍 Closing position ${position.id} for ${position.symbol}: ${position.quantity} @ ${currentPrice.toFixed(2)} = ${orderValue.toFixed(2)} USDT`
+    );
+
     // Execute market sell order
     const clientOrderId = `bot_manual_exit_${Date.now()}_${position.symbol}`;
     const request = {
@@ -516,31 +526,150 @@ router.post('/positions/:id/close', async (req, res) => {
       quantity: position.quantity.toFixed(6),
     };
 
-    const response = await binanceClient.createOrder(request);
+    try {
+      const response = await binanceClient.createOrder(request);
 
-    // Persist exit order
-    await insertOrder({
-      symbol: position.symbol,
-      side: 'SELL',
-      type: 'MARKET',
-      qty: position.quantity,
-      status: 'NEW',
-      binance_order_id: response.orderId.toString(),
-      client_order_id: clientOrderId,
-      request_json: request,
-      response_json: response,
-    });
+      // Persist exit order
+      await insertOrder({
+        symbol: position.symbol,
+        side: 'SELL',
+        type: 'MARKET',
+        qty: position.quantity,
+        status: 'NEW',
+        binance_order_id: response.orderId.toString(),
+        client_order_id: clientOrderId,
+        request_json: request,
+        response_json: response,
+      });
 
-    // Close position
-    await closePosition(position.id, response.orderId.toString(), 'CLOSED');
+      // Close position
+      await closePosition(position.id, response.orderId.toString(), 'CLOSED');
 
-    log.info(
-      `✅ Manually closed position ${position.id} for ${position.symbol} | Order ${response.orderId}`
-    );
-    res.json({ message: 'Position closed successfully', orderId: response.orderId });
+      log.info(
+        `✅ Manually closed position ${position.id} for ${position.symbol} | Order ${response.orderId}`
+      );
+      res.json({ message: 'Position closed successfully', orderId: response.orderId });
+    } catch (orderError: any) {
+      // Check if error is due to minNotional/NOTIONAL filter
+      const errorMsg = orderError?.message || String(orderError);
+      const isNotionalError =
+        errorMsg.includes('NOTIONAL') ||
+        errorMsg.includes('minNotional') ||
+        errorMsg.includes('Filter failure');
+
+      if (isNotionalError && orderValue < 15) {
+        log.warn(
+          `⚠️  Regular close failed (minNotional), falling back to force-close: ${position.symbol} ${orderValue.toFixed(2)} USDT`
+        );
+
+        // Mark position as closed in DB to remove from tracking
+        await closePosition(position.id, 'FORCE_CLOSED_VIA_DB', 'CLOSED');
+
+        res.json({
+          message:
+            'Position too small to close on exchange (below minNotional), removed from tracking',
+          warning: `Order value ${orderValue.toFixed(2)} USDT is below minimum. Position cleared from DB.`,
+          forceClosedViaDb: true,
+        });
+      } else {
+        // Not a minNotional error, propagate the error
+        log.error(`Failed to close position ${positionId}:`, orderError);
+        res.status(400).json({
+          error: 'Failed to close position',
+          details: errorMsg.substring(0, 200), // Limit error message length
+        });
+      }
+    }
   } catch (error) {
-    log.error(`Failed to close position ${positionId}:`, error);
-    res.status(500).json({ error: 'Failed to close position' });
+    log.error(`Error in close position handler ${positionId}:`, error);
+    res.status(500).json({ error: 'Server error while closing position' });
+  }
+});
+
+/**
+ * POST /bot/positions/:id/force-close - Force close a position (ignores minNotional)
+ * Use this for stuck positions that are too small to close normally
+ */
+router.post('/positions/:id/force-close', async (req, res) => {
+  const { binanceClient } = req.app.locals;
+  const positionId = req.params.id;
+
+  if (!binanceClient) {
+    return res.status(503).json({ error: 'Binance client not configured' });
+  }
+
+  try {
+    const position = await getPositionById(positionId);
+
+    if (!position) {
+      return res.status(404).json({ error: 'Position not found' });
+    }
+
+    if (position.status !== 'OPEN') {
+      return res.status(400).json({ error: 'Position is not open' });
+    }
+
+    // Get current price
+    const ticker = await binanceClient.get24hTicker(position.symbol);
+    const currentPrice = Number(ticker.lastPrice);
+    const orderValue = position.quantity * currentPrice;
+
+    log.warn(
+      `⚠️ FORCE CLOSING position ${position.id} for ${position.symbol} (value: ${orderValue.toFixed(2)} USDT)`
+    );
+
+    // Execute market sell order (attempt regardless of minNotional)
+    const clientOrderId = `bot_force_exit_${Date.now()}_${position.symbol}`;
+    const request = {
+      symbol: position.symbol,
+      side: 'SELL' as const,
+      type: 'MARKET' as const,
+      quantity: position.quantity.toFixed(6),
+    };
+
+    try {
+      const response = await binanceClient.createOrder(request);
+
+      // Persist exit order
+      await insertOrder({
+        symbol: position.symbol,
+        side: 'SELL',
+        type: 'MARKET',
+        qty: position.quantity,
+        status: 'NEW',
+        binance_order_id: response.orderId.toString(),
+        client_order_id: clientOrderId,
+        request_json: request,
+        response_json: response,
+      });
+
+      // Close position
+      await closePosition(position.id, response.orderId.toString(), 'CLOSED');
+
+      log.info(
+        `✅ Force closed position ${position.id} for ${position.symbol} | Order ${response.orderId}`
+      );
+      res.json({
+        message: 'Position force closed successfully',
+        orderId: response.orderId,
+        warning: 'Order may have been below minNotional',
+      });
+    } catch (orderError: any) {
+      // If order fails due to minNotional/filter, mark position as manually closed
+      log.error(`Exchange rejected force close order for ${position.symbol}:`, orderError);
+
+      // Close position in DB anyway to clear it from the system
+      await closePosition(position.id, 'FORCE_CLOSED', 'CLOSED');
+
+      res.json({
+        message: 'Position marked as closed in database (exchange order failed)',
+        error: orderError?.message || String(orderError),
+        warning: 'Position was too small for exchange - cleared from tracking',
+      });
+    }
+  } catch (error) {
+    log.error(`Failed to force close position ${positionId}:`, error);
+    res.status(500).json({ error: 'Failed to force close position' });
   }
 });
 

@@ -72,10 +72,11 @@ export async function monitorPositions(client: BinanceClient, config: BotConfig)
     : config.TRAILING_STOP_DISTANCE_PERCENT;
 
   if (openPositions.length === 0) {
+    log.debug('No open positions to monitor');
     return;
   }
 
-  log.info(`Monitoring ${openPositions.length} open positions...`);
+  log.info(`✓ Monitoring ${openPositions.length} open positions...`);
 
   for (const position of openPositions) {
     try {
@@ -117,22 +118,51 @@ async function checkPosition(
       `PnL=${pnlPercent.toFixed(2)}% (${pnlUsdt.toFixed(2)} USDT)`
   );
 
-  // Check STOP LOSS
-  if (position.stop_loss_price && currentPrice <= position.stop_loss_price) {
-    log.warn(
-      `🛑 STOP LOSS HIT for ${symbol}! Price ${currentPrice.toFixed(2)} <= SL ${position.stop_loss_price.toFixed(2)}`
+  // Check STOP LOSS - ensure all values are numbers
+  const slPrice = position.stop_loss_price ? Number(position.stop_loss_price) : null;
+  if (slPrice !== null) {
+    log.info(
+      `${symbol} SL Check: Current=${currentPrice.toFixed(4)}, SL=${slPrice.toFixed(4)}, SL is number? ${typeof slPrice === 'number'}, Triggered? ${currentPrice <= slPrice}`
     );
-    await executeSellOrder(client, position, 'STOPPED_OUT');
-    return;
+
+    if (currentPrice <= slPrice) {
+      log.warn(
+        `🛑 STOP LOSS HIT for ${symbol}! Price ${currentPrice.toFixed(4)} <= SL ${slPrice.toFixed(4)} (PnL: ${pnlPercent.toFixed(2)}%)`
+      );
+      log.warn(
+        `   Entry: ${position.entry_price.toFixed(4)}, Current: ${currentPrice.toFixed(4)}, SL: ${slPrice.toFixed(4)}`
+      );
+      await executeSellOrder(client, position, 'STOPPED_OUT');
+      return;
+    } else {
+      // Log distance to stop-loss for visibility
+      const slDistance = ((currentPrice - slPrice) / slPrice) * 100;
+      if (Math.abs(pnlPercent) > 1) {
+        // Only log if position has moved significantly
+        log.debug(
+          `${symbol}: SL check - Price ${currentPrice.toFixed(4)} > SL ${slPrice.toFixed(4)} (${slDistance.toFixed(2)}% above SL) | PnL: ${pnlPercent.toFixed(2)}%`
+        );
+      }
+    }
   }
 
-  // Check TAKE PROFIT
-  if (position.take_profit_price && currentPrice >= position.take_profit_price) {
+  // Check TAKE PROFIT - ensure all values are numbers
+  const tpPrice = position.take_profit_price ? Number(position.take_profit_price) : null;
+  if (tpPrice !== null && currentPrice >= tpPrice) {
     log.info(
-      `🎯 TAKE PROFIT HIT for ${symbol}! Price ${currentPrice.toFixed(2)} >= TP ${position.take_profit_price.toFixed(2)}`
+      `🎯 TAKE PROFIT HIT for ${symbol}! Price ${currentPrice.toFixed(4)} >= TP ${tpPrice.toFixed(4)} (PnL: ${pnlPercent.toFixed(2)}%)`
     );
     await executeSellOrder(client, position, 'TAKE_PROFIT');
     return;
+  } else if (tpPrice !== null) {
+    // Log distance to take-profit for visibility
+    const tpDistance = ((position.take_profit_price - currentPrice) / currentPrice) * 100;
+    if (pnlPercent > 1) {
+      // Only log if position is in profit
+      log.debug(
+        `${symbol}: TP check - Price ${currentPrice.toFixed(4)} < TP ${position.take_profit_price.toFixed(4)} (${tpDistance.toFixed(2)}% below TP)`
+      );
+    }
   }
 
   // Check TRAILING STOP
@@ -187,11 +217,13 @@ async function checkTrailingStop(
 
 /**
  * Executes a SELL order to close a position
+ * @param forceClose If true, attempt to sell even if below minNotional (for stuck positions)
  */
 async function executeSellOrder(
   client: BinanceClient,
   position: PositionRow,
-  closeReason: 'CLOSED' | 'STOPPED_OUT' | 'TAKE_PROFIT'
+  closeReason: 'CLOSED' | 'STOPPED_OUT' | 'TAKE_PROFIT',
+  forceClose = false
 ): Promise<void> {
   const { symbol } = position;
 
@@ -217,17 +249,23 @@ async function executeSellOrder(
     // Check if order value meets minimum notional
     const orderValue = quantity * currentPrice;
     if (orderValue < filters.minNotional) {
-      log.warn(
-        `🚫 SELL BLOCKED for ${symbol}: Order value ${orderValue.toFixed(2)} USDT < minimum ${filters.minNotional} USDT`
-      );
-      log.warn(
-        `   Quantity: ${quantity.toFixed(8)} @ ${currentPrice.toFixed(2)} = ${orderValue.toFixed(2)} USDT`
-      );
-      log.warn(`   Reason: ${closeReason}`);
-      log.info(
-        `   Position will be kept open. Consider closing manually when order value is larger.`
-      );
-      return;
+      if (!forceClose) {
+        log.warn(
+          `🚫 SELL BLOCKED for ${symbol}: Order value ${orderValue.toFixed(2)} USDT < minimum ${filters.minNotional} USDT`
+        );
+        log.warn(
+          `   Quantity: ${quantity.toFixed(8)} @ ${currentPrice.toFixed(2)} = ${orderValue.toFixed(2)} USDT`
+        );
+        log.warn(`   Reason: ${closeReason}`);
+        log.info(
+          `   ⚠️  Position stuck! Use force-close API endpoint to close despite minNotional.`
+        );
+        return;
+      } else {
+        log.warn(
+          `⚠️  FORCE CLOSE ${symbol}: Order value ${orderValue.toFixed(2)} < min ${filters.minNotional}, attempting anyway...`
+        );
+      }
     }
 
     const clientOrderId = `bot_exit_${Date.now()}_${symbol}`;

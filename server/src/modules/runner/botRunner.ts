@@ -78,6 +78,8 @@ export async function runBot(client: BinanceClient, config: BotConfig): Promise<
       symbolSource = symbolSelection.source;
 
       // Monitor open positions for stop loss / take profit
+      // IMPORTANT: Always monitor positions even if trading is disabled
+      // to ensure stop-losses and take-profits are triggered
       await monitorPositions(client, config);
 
       // 1. Fetch market data

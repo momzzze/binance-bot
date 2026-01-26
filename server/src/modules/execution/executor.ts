@@ -14,6 +14,9 @@ const log = createLogger('executor');
 // Buffer so positions stay above exchange minNotional after a drawdown
 // e.g. 1.2 = 20% cushion; prevents getting stuck below minNotional on exit
 const MIN_NOTIONAL_BUFFER = 1.2;
+// Minimum entry notional to prevent positions that become too small to close
+// Set higher than exchange minNotional to account for price drops
+const MIN_ENTRY_NOTIONAL = 15;
 
 // Cache for symbol filters
 const symbolFiltersCache = new Map<
@@ -208,6 +211,19 @@ async function executeBuyOrder(
       };
     }
     const cappedNotional = cappedQty * currentPrice;
+
+    // Check if capped notional meets minimum entry threshold
+    if (cappedNotional < MIN_ENTRY_NOTIONAL) {
+      log.warn(
+        `🚫 SKIPPED ${symbol}: Capped notional ${cappedNotional.toFixed(2)} < minimum entry ${MIN_ENTRY_NOTIONAL} (prevents uncloseable positions)`
+      );
+      return {
+        symbol,
+        success: false,
+        reason: `Capped notional ${cappedNotional.toFixed(2)} < min entry ${MIN_ENTRY_NOTIONAL}`,
+      };
+    }
+
     if (cappedNotional < minNotionalWithBuffer) {
       log.warn(
         `Capped notional ${cappedNotional.toFixed(2)} USDT is below buffered minNotional ${minNotionalWithBuffer.toFixed(2)} for ${symbol}`
@@ -223,6 +239,18 @@ async function executeBuyOrder(
     log.info(
       `Capped position size to ${orderValueUSDT.toFixed(2)} USDT (${config.MAX_POSITION_CAPITAL_PERCENT}% of trading capital), qty=${quantity}`
     );
+  }
+
+  // Final check: ensure entry notional meets minimum threshold
+  if (orderValueUSDT < MIN_ENTRY_NOTIONAL) {
+    log.warn(
+      `🚫 SKIPPED ${symbol}: Entry notional ${orderValueUSDT.toFixed(2)} < minimum ${MIN_ENTRY_NOTIONAL} (prevents uncloseable positions)`
+    );
+    return {
+      symbol,
+      success: false,
+      reason: `Entry notional ${orderValueUSDT.toFixed(2)} < min ${MIN_ENTRY_NOTIONAL}`,
+    };
   }
 
   // Final guard: do not exceed remaining trading capital

@@ -10,10 +10,15 @@
  */
 
 import type { Candle } from '../market/marketData.js';
-import { computeSMA, computeEMA, computeRSI } from '../market/marketData.js';
+import { computeSMA, computeEMA, computeRSI, computeCCI } from '../market/marketData.js';
 import { createLogger } from '../../services/logger.js';
 
 const log = createLogger('strategy/marketcap');
+
+// Confluence thresholds (same as simple strategy)
+const MOMENTUM_PERIOD = 10;
+const MOMENTUM_THRESHOLD = 0.5;
+const CCI_PERIOD = 20;
 
 export interface MarketCapSignal {
   symbol: string;
@@ -104,12 +109,33 @@ export function computeMarketCapSignal(candles: Candle[], symbol: string): Marke
   const currentPrice = candles[candles.length - 1].close;
   const sma20 = computeSMA(candles, 20);
   const sma50 = computeSMA(candles, 50);
+  const ma7 = computeSMA(candles, 7);
+  const ma99 = computeSMA(candles, 99);
   const ema12 = computeEMA(candles, 12);
   const ema26 = computeEMA(candles, 26);
   const rsi = computeRSI(candles, 14);
+  const cci = computeCCI(candles, CCI_PERIOD);
   const volumeTrend = calculateVolumeTrend(candles, 20);
   const atr = calculateATR(candles, 14);
   const volatility = atr / currentPrice; // ATR as percentage of price
+
+  // HARD GATE: MA7 must be above MA99 (no buys in downtrend)
+  if (ma7 === null || ma99 === null || ma7 <= ma99) {
+    log.debug(`${symbol}: BLOCKED by MA7 <= MA99 (${ma7?.toFixed(4)} <= ${ma99?.toFixed(4)})`);
+    return {
+      symbol,
+      signal: 'HOLD',
+      score: 0,
+      confidence: 0,
+      meta: {
+        currentPrice,
+        volumeTrend: 0,
+        momentumScore: 0,
+        volatility: volatility * 100,
+        reason: `MA7 (${ma7?.toFixed(4)}) must be > MA99 (${ma99?.toFixed(4)})`,
+      },
+    };
+  }
 
   let score = 0;
   let confidence = 50;
