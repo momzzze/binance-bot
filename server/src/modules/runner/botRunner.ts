@@ -3,6 +3,7 @@ import type { BotConfig } from '../../config/env.js';
 import { fetchMultiSymbolCandles } from '../market/marketData.js';
 import { computeMultiSymbolSignals as computeSimpleSignals } from '../strategy/simpleStrategy.js';
 import { computeMarketCapSignals } from '../strategy/marketCapFollowing.js';
+import { computeMultiSymbolSignals as computeMacdSignals } from '../strategy/macdStrategy.js';
 import { executeDecisions } from '../execution/executor.js';
 import { monitorPositions } from '../execution/positionMonitor.js';
 import { checkGlobalTrading } from '../risk/riskEngine.js';
@@ -82,18 +83,16 @@ export async function runBot(client: BinanceClient, config: BotConfig): Promise<
       // to ensure stop-losses and take-profits are triggered
       await monitorPositions(client, config);
 
-      // 1. Fetch market data
-      const symbolCandles = await fetchMultiSymbolCandles(
-        client,
-        currentSymbols,
-        config.INTERVAL,
-        100
-      );
+      // 1. Fetch market data (only needed for candle-based strategies)
+      let symbolCandles = [] as Awaited<ReturnType<typeof fetchMultiSymbolCandles>>;
+      if (config.STRATEGY !== 'macd') {
+        symbolCandles = await fetchMultiSymbolCandles(client, currentSymbols, config.INTERVAL, 100);
 
-      if (symbolCandles.length === 0) {
-        log.warn('No candle data fetched - skipping iteration');
-        await sleep(config.LOOP_MS);
-        continue;
+        if (symbolCandles.length === 0) {
+          log.warn('No candle data fetched - skipping iteration');
+          await sleep(config.LOOP_MS);
+          continue;
+        }
       }
 
       // 2. Compute signals based on selected strategy
@@ -112,6 +111,8 @@ export async function runBot(client: BinanceClient, config: BotConfig): Promise<
           score: signal.score,
           meta: signal.meta,
         }));
+      } else if (config.STRATEGY === 'macd') {
+        decisions = await computeMacdSignals(client, currentSymbols);
       } else {
         // Simple strategy (default) - now async!
         decisions = await computeSimpleSignals(symbolCandles);

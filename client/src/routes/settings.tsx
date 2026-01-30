@@ -11,6 +11,9 @@ export const Route = createFileRoute('/settings')({
 function Settings() {
   const [status, setStatus] = useState<BotStatus | null>(null);
   const [strategy, setStrategy] = useState<StrategyConfig | null>(null);
+  const [strategyMode, setStrategyMode] = useState<
+    'simple' | 'marketcap' | 'macd'
+  >('simple');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -21,6 +24,9 @@ function Settings() {
     try {
       const data = await botService.getStatus();
       setStatus(data);
+      if (data.strategy) {
+        setStrategyMode(data.strategy);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load status');
     } finally {
@@ -97,6 +103,26 @@ function Settings() {
     }
   };
 
+  const handleStrategyModeChange = async (
+    next: 'simple' | 'marketcap' | 'macd'
+  ) => {
+    setLoading(true);
+    setError(null);
+    setActionMessage(null);
+    try {
+      await botService.setStrategy(next);
+      setStrategyMode(next);
+      setActionMessage(`Strategy set to ${next}`);
+      await loadStatus();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Failed to update strategy'
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadStatus();
     loadStrategy();
@@ -131,7 +157,7 @@ function Settings() {
         />
       </div>
 
-      <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem' }}>
+      <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.25rem' }}>
         <button
           onClick={() => handleAction('start')}
           disabled={loading || status?.running}
@@ -153,6 +179,38 @@ function Settings() {
         >
           Refresh
         </button>
+      </div>
+
+      <div
+        style={{
+          display: 'flex',
+          gap: '0.75rem',
+          alignItems: 'center',
+          marginBottom: '2rem',
+        }}
+      >
+        <label style={{ color: '#9aa3c4' }}>Strategy</label>
+        <select
+          value={strategyMode}
+          onChange={(e) =>
+            handleStrategyModeChange(
+              e.target.value as 'simple' | 'marketcap' | 'macd'
+            )
+          }
+          disabled={loading}
+          style={{
+            background: '#0a0e27',
+            color: '#f3ba2f',
+            border: '1px solid #232a4a',
+            borderRadius: '6px',
+            padding: '0.6rem 0.75rem',
+            minWidth: '180px',
+          }}
+        >
+          <option value="simple">Simple</option>
+          <option value="macd">MACD</option>
+          <option value="marketcap">Market Cap</option>
+        </select>
       </div>
 
       {strategy && (

@@ -40,7 +40,35 @@ router.get('/status', (req, res) => {
     loopMs: config.LOOP_MS,
     tradingEnabled: config.TRADING_ENABLED,
     killSwitch: config.BOT_KILL_SWITCH,
+    strategy: config.STRATEGY,
   });
+});
+
+/**
+ * GET /bot/strategy - Get current strategy
+ */
+router.get('/strategy', (req, res) => {
+  const { config } = req.app.locals;
+  res.json({ strategy: config.STRATEGY });
+});
+
+/**
+ * PUT /bot/strategy - Set current strategy
+ * Body: { strategy: 'simple' | 'marketcap' | 'macd' }
+ */
+router.put('/strategy', (req, res) => {
+  const { config } = req.app.locals;
+  const { strategy } = req.body as { strategy?: string };
+
+  const allowed = ['simple', 'marketcap', 'macd'] as const;
+  if (!strategy || !allowed.includes(strategy as (typeof allowed)[number])) {
+    return res.status(400).json({
+      error: `Invalid strategy. Allowed: ${allowed.join(', ')}`,
+    });
+  }
+
+  config.STRATEGY = strategy as (typeof allowed)[number];
+  res.json({ strategy: config.STRATEGY, updated: true });
 });
 
 /**

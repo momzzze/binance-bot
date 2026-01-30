@@ -7,6 +7,7 @@ export type BotStatus = {
   loopMs: number;
   tradingEnabled: boolean;
   killSwitch: boolean;
+  strategy?: 'simple' | 'marketcap' | 'macd';
 };
 
 export type Position = {
@@ -90,6 +91,17 @@ export type PositionNotionalResponse = {
 
 export const botService = {
   getStatus: () => api<BotStatus>('/bot/status'),
+  getStrategy: () =>
+    api<{ strategy: 'simple' | 'marketcap' | 'macd' }>('/bot/strategy'),
+  setStrategy: (strategy: 'simple' | 'marketcap' | 'macd') =>
+    api<{ strategy: 'simple' | 'marketcap' | 'macd'; updated: boolean }>(
+      '/bot/strategy',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategy }),
+      }
+    ),
   getAccount: () => api<AccountInfo>('/bot/account'),
   start: () =>
     api<{ message: string; running: boolean }>('/bot/start', {

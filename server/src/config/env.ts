@@ -13,7 +13,7 @@ export type BotConfig = {
   MAX_TRADING_CAPITAL_PERCENT: number; // Max % of base asset to use for trading (e.g., 80 = 80%)
   MAX_POSITION_CAPITAL_PERCENT: number; // Max % of trading capital to allocate per single position (e.g., 30 = 30%)
   LOOP_MS: number;
-  STRATEGY: 'simple' | 'marketcap'; // Strategy selection
+  STRATEGY: 'simple' | 'marketcap' | 'macd'; // Strategy selection
   RISK_PER_TRADE_PERCENT: number; // Risk per trade as % of balance (e.g., 1 = 1%)
   STOP_LOSS_PERCENT: number; // Stop loss as percentage (e.g., 2 = 2%)
   TAKE_PROFIT_PERCENT: number; // Take profit as percentage (e.g., 10 = 10%)
@@ -77,7 +77,7 @@ export function loadEnv(): BotConfig {
     MAX_TRADING_CAPITAL_PERCENT: toNum(process.env.MAX_TRADING_CAPITAL_PERCENT, 80),
     MAX_POSITION_CAPITAL_PERCENT: toNum(process.env.MAX_POSITION_CAPITAL_PERCENT, 30),
     LOOP_MS: toNum(process.env.LOOP_MS, 5000),
-    STRATEGY: (process.env.STRATEGY ?? 'simple') as 'simple' | 'marketcap',
+    STRATEGY: (process.env.STRATEGY ?? 'simple') as 'simple' | 'marketcap' | 'macd',
     RISK_PER_TRADE_PERCENT: toNum(process.env.RISK_PER_TRADE_PERCENT, 1),
     STOP_LOSS_PERCENT: toNum(process.env.STOP_LOSS_PERCENT, 2),
     TAKE_PROFIT_PERCENT: toNum(process.env.TAKE_PROFIT_PERCENT, 8),
