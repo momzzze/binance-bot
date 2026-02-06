@@ -121,7 +121,12 @@ export function computeMarketCapSignal(candles: Candle[], symbol: string): Marke
 
   // HARD GATE: MA7 must be above MA99 (no buys in downtrend)
   if (ma7 === null || ma99 === null || ma7 <= ma99) {
-    log.debug(`${symbol}: BLOCKED by MA7 <= MA99 (${ma7?.toFixed(4)} <= ${ma99?.toFixed(4)})`);
+    const ma7Str = ma7?.toFixed(4) ?? 'null';
+    const ma99Str = ma99?.toFixed(4) ?? 'null';
+    const separation = ma7 && ma99 ? (((ma7 - ma99) / ma99) * 100).toFixed(2) : 'N/A';
+    log.info(
+      `${symbol}: ⛔ HARD GATE BLOCKED - MA7 (${ma7Str}) <= MA99 (${ma99Str}) [${separation}%]`
+    );
     return {
       symbol,
       signal: 'HOLD',
@@ -132,7 +137,7 @@ export function computeMarketCapSignal(candles: Candle[], symbol: string): Marke
         volumeTrend: 0,
         momentumScore: 0,
         volatility: volatility * 100,
-        reason: `MA7 (${ma7?.toFixed(4)}) must be > MA99 (${ma99?.toFixed(4)})`,
+        reason: `⛔ HARD GATE: MA7 (${ma7Str}) must be > MA99 (${ma99Str}) [Separation: ${separation}%]`,
       },
     };
   }
@@ -235,11 +240,13 @@ export function computeMarketCapSignal(candles: Candle[], symbol: string): Marke
 
   confidence = Math.min(100, Math.max(0, confidence));
 
-  // Log actionable signals (BUY/SELL)
-  if (signal !== 'HOLD') {
-    log.debug(
-      `${symbol}: signal=${signal}, score=${score}, confidence=${confidence.toFixed(0)}%, volumeTrend=${volumeTrend.toFixed(1)}%`
-    );
+  // Log ALL signals with score breakdown to help debug
+  const logLevel = signal !== 'HOLD' ? 'info' : 'debug';
+  log[logLevel](
+    `${symbol}: signal=${signal}, score=${score}, confidence=${confidence.toFixed(0)}%, volumeTrend=${volumeTrend.toFixed(1)}%`
+  );
+  if (signal === 'HOLD' && score !== 0) {
+    log.info(`${symbol}: HOLD but score=${score} (need >=3 for BUY, <=-3 for SELL)`);
   }
 
   return {

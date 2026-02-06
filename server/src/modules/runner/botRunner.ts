@@ -126,13 +126,19 @@ export async function runBot(client: BinanceClient, config: BotConfig): Promise<
         `Signals: ${buySignals.length} BUY, ${sellSignals.length} SELL, ${holdSignals.length} HOLD`
       );
 
-      // Log BUY/SELL decisions
+      // Log ALL decisions with detailed reasons
       for (const decision of decisions) {
+        const priceStr = decision.meta.currentPrice ? decision.meta.currentPrice.toFixed(2) : 'N/A';
         if (decision.signal !== 'HOLD') {
           log.info(
-            `${decision.symbol}: ${decision.signal} (score=${decision.score}, price=${decision.meta.currentPrice.toFixed(2)})`
+            `📊 ${decision.symbol}: ${decision.signal} (score=${decision.score}, price=${priceStr})`
           );
-          log.debug(`  Reason: ${decision.meta.reason}`);
+          log.info(`   Reason: ${decision.meta.reason}`);
+        } else {
+          // Show HOLD reasons to debug why no signals
+          log.info(
+            `📊 ${decision.symbol}: HOLD (price=${priceStr}) - ${decision.meta.reason || 'No reason provided'}`
+          );
         }
       }
 
